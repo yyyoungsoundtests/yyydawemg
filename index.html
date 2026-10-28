@@ -61,6 +61,8 @@ button { cursor: pointer; }
 .tcp.master { background: #2E3032; box-shadow: inset 3px 0 0 #E8E4DA; border-top: 2px solid #121314; }
 .tcp.master .tnum { color: #E8E4DA; font-weight: 700; }
 .tcp.master .tname { letter-spacing: .08em; }
+.monob { height: 22px; padding: 0 6px; border-radius: 3px; border: 1px solid var(--line); background: var(--btn); font: 700 9.5px var(--f-ui); letter-spacing: .04em; color: #B9BDBE; flex: none; }
+.monob.on { background: #3D6E9E; color: #fff; border-color: #5A8EC2; }
 .mmtr { flex: 1; min-width: 0; height: 14px; display: block; }
 .tcp.muted .tname { opacity: .5; }
 .tnum { display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 11px; background: rgba(0,0,0,.12); }
@@ -545,6 +547,9 @@ button { cursor: pointer; }
     <span class="sep"></span>
     <button class="tb" id="bSplit" title="Разрезать по курсору (S)">✂ Разрезать</button>
     <button class="tb" id="bDel" title="Удалить (Delete)">Удалить</button>
+    <button class="tb" id="bCopy" title="Копировать (⌘C)">Копировать</button>
+    <button class="tb" id="bCut" title="Вырезать (⌘X)">Вырезать</button>
+    <button class="tb" id="bPaste" title="Вставить в позицию курсора (⌘V)">Вставить</button>
     <button class="tb" id="bRipple" title="Удаление со сдвигом следующих клипов">Ripple</button>
     <button class="tb" id="bSnap" title="Прилипание к краям клипов, регионов и курсору">Snap</button>
     <button class="tb" id="bMulti" title="Мультивыбор: тап добавляет клип к выделению">⧉ Выбор</button>
@@ -583,8 +588,8 @@ button { cursor: pointer; }
   </footer>
 </div>
 <div id="toast" hidden></div>
-<script src="stretch.js?v=0.8.0"></script>
-<script src="fx.js?v=0.8.0"></script>
-<script src="app.js?v=0.8.0"></script>
+<script src="stretch.js?v=0.9.0"></script>
+<script src="fx.js?v=0.9.0"></script>
+<script src="app.js?v=0.9.0"></script>
 </body>
 </html>

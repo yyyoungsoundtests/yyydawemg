@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.8.0';
+const APP_VERSION = '0.9.0';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -114,7 +114,7 @@ function upgradeLim(m) {
 const shGainDb = (v) => v * 0.5;
 function makeRegionSet(start, variant) {
   const out = []; let t = start;
-  for (const len of [30, 15, 10, 5]) {
+  for (const len of [30, 20, 15, 10, 5]) {
     out.push({ id: uid(), name: variant > 1 ? `${len}с в${variant}` : `${len}с`, start: t, len });
     t += len + 3;
   }
@@ -249,13 +249,21 @@ async function decodeBlob(blob) {
 const PEAK_BIN = 128;
 function computePeaks(buf) {
   const n = Math.ceil(buf.length / PEAK_BIN), mn = new Float32Array(n), mx = new Float32Array(n);
+  const mnL = new Float32Array(n), mxL = new Float32Array(n), mnR = new Float32Array(n), mxR = new Float32Array(n);
   const a = buf.getChannelData(0), b = buf.numberOfChannels > 1 ? buf.getChannelData(1) : a;
+  let diff = 0;
   for (let i = 0; i < n; i++) {
-    let lo = 0, hi = 0; const e = Math.min(buf.length, (i + 1) * PEAK_BIN);
-    for (let j = i * PEAK_BIN; j < e; j++) { const v = (a[j] + b[j]) * 0.5; if (v < lo) lo = v; if (v > hi) hi = v; }
-    mn[i] = lo; mx[i] = hi;
+    let lo = 0, hi = 0, l0 = 0, l1 = 0, r0 = 0, r1 = 0; const e = Math.min(buf.length, (i + 1) * PEAK_BIN);
+    for (let j = i * PEAK_BIN; j < e; j++) {
+      const x = a[j], y = b[j], v = (x + y) * 0.5;
+      if (v < lo) lo = v; if (v > hi) hi = v;
+      if (x < l0) l0 = x; if (x > l1) l1 = x; if (y < r0) r0 = y; if (y > r1) r1 = y;
+      diff += Math.abs(x - y);
+    }
+    mn[i] = lo; mx[i] = hi; mnL[i] = l0; mxL[i] = l1; mnR[i] = r0; mxR[i] = r1;
   }
-  return { mn, mx };
+  // stereo only if the two channels really differ (a mono file stored as two equal channels stays mono)
+  return { mn, mx, mnL, mxL, mnR, mxR, stereo: buf.numberOfChannels > 1 && diff > buf.length * 1e-5 };
 }
 async function ensureBuffer(fileId) {
   if (buffers.has(fileId)) return buffers.get(fileId);
@@ -284,10 +292,18 @@ async function importFiles(files, trackId, at) {
     toast(`Загружаю ${f.name}…`);
     try {
       const fileId = uid();
-      const buf = await decodeBlob(f);
-      await Store.put('blobs', fileId, f);
+      let buf = await decodeBlob(f), blob = f;
+      const trk = P.tracks.find((k) => k.id === trackId);
+      if (trk && trk.kind === 'voice' && buf.numberOfChannels > 1) {
+        // voice is always mono: fold L+R into one channel and keep that file
+        const a = buf.getChannelData(0), b = buf.getChannelData(1), m = new Float32Array(a.length);
+        for (let i = 0; i < a.length; i++) m[i] = (a[i] + b[i]) * 0.5;
+        blob = encodeWav24At([m], SR);
+        buf = new AudioBuffer({ length: m.length, numberOfChannels: 1, sampleRate: SR }); buf.copyToChannel(m, 0);
+      }
+      await Store.put('blobs', fileId, blob);
       buffers.set(fileId, { buf, peaks: computePeaks(buf) });
-      P.files[fileId] = { name: f.name, size: f.size, dur: buf.duration };
+      P.files[fileId] = { name: f.name, size: blob.size, dur: buf.duration };
       const tr = P.tracks.find((k) => k.id === trackId);
       // raw voice comes in at any level: bring the spoken parts to about -20 dBFS RMS so the mix starts balanced
       const gain = tr && tr.kind === 'voice' ? voiceAutoGain(buf) : 0;
@@ -404,13 +420,19 @@ async function buildGraph(ctx, live, ov = {}) {
   g.bus = bus;
   for (const t of P.tracks) {
     const n = { input: ctx.createGain(), eq: makeEQ(ctx), vol: ctx.createGain(), pan: ctx.createStereoPanner() };
+    // MONO switch: stereo path and summed (L+R)/2 path, one of them open
+    n.in2 = ctx.createGain(); n.inS = ctx.createGain(); n.inM = ctx.createGain();
+    n.down = ctx.createGain(); n.down.channelCount = 1; n.down.channelCountMode = 'explicit'; n.down.channelInterpretation = 'speakers';
+    const mg = ctx.createChannelMerger(2);
+    n.input.connect(n.inS); n.inS.connect(n.in2);
+    n.input.connect(n.down); n.down.connect(mg, 0, 0); n.down.connect(mg, 0, 1); mg.connect(n.inM); n.inM.connect(n.in2);
     if (t.kind === 'voice') {
       n.declick = W('efir-declick', PR.declick(t), t.id + '.declick');
       n.vox = W('efir-vox', PR.vox(t), t.id + '.vox');
       n.la2a = W('efir-la2a', PR.la2a(t), t.id + '.la2a');
       n.rcomp = W('efir-rcomp', PR.rcomp(t), t.id + '.rcomp');
       n.deess = W('efir-deess', PR.deess(t.deess), t.id + '.deess');
-      n.input.connect(n.declick); n.declick.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vox); n.vox.connect(n.rcomp); n.rcomp.connect(n.la2a); n.la2a.connect(n.deess); n.deess.connect(n.vol);
+      n.in2.connect(n.declick); n.declick.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vox); n.vox.connect(n.rcomp); n.rcomp.connect(n.la2a); n.la2a.connect(n.deess); n.deess.connect(n.vol);
       n.vol.connect(n.pan);
       n.post = delay(LAT.duck); n.pan.connect(n.post); n.post.connect(m.input);
       n.sendD = ctx.createGain(); n.sendR = ctx.createGain();
@@ -419,13 +441,13 @@ async function buildGraph(ctx, live, ov = {}) {
       n.pan.connect(sc);
       g.workers.push(n.declick, n.vox, n.rcomp, n.la2a, n.deess);
     } else if (t.kind === 'music') {
-      n.input.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vol); n.vol.connect(n.pan);
+      n.in2.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vol); n.vol.connect(n.pan);
       n.pre = delay(VOICE_LAT); n.pan.connect(n.pre);
       n.duck = W('efir-ducker', PR.duck(t), t.id + '.duck', 2);
       n.pre.connect(n.duck, 0, 0); n.duck.connect(m.input); n.out = n.duck;
       g.workers.push(n.duck);
     } else {
-      n.input.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vol); n.vol.connect(n.pan);
+      n.in2.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vol); n.vol.connect(n.pan);
       n.post = delay(VOICE_LAT + LAT.duck); n.pan.connect(n.post); n.post.connect(m.input); n.out = n.post;
     }
     if (live) { n.an = an(); n.eq[MAXB - 1].connect(n.an); }
@@ -443,7 +465,8 @@ function applyGraph(g, ov = {}) {
     applyEQ(n.eq, t.eq);
     const audible = !t.mute && (!anySolo || t.solo);
     n.vol.gain.value = audible ? dbToLin(t.vol) : 0;
-    n.pan.pan.value = t.pan || 0;
+    n.pan.pan.value = 0;
+    n.inS.gain.value = t.mono ? 0 : 1; n.inM.gain.value = t.mono ? 1 : 0;
     if (t.kind === 'voice') {
       n.declick.port.postMessage(PR.declick(t));
       n.vox.port.postMessage(PR.vox(t));
@@ -568,7 +591,9 @@ function scheduleList(ctx, clips, from, to, t0, destFor) {
 /* ================= Transport ================= */
 const T = { g: null, srcs: [], segs: [], loop: null, stopAt: Infinity, returnTo: 0 };
 function projectEnd() { let e = 0; for (const c of P.clips) e = Math.max(e, c.start + c.dur); for (const r of P.regions) e = Math.max(e, r.start + r.len); return e; }
+function materialEnd() { let e = 0; for (const c of P.clips) e = Math.max(e, c.start + c.dur); return e; }
 async function play(from = P.playhead, stopAt = Infinity) {
+  if (from >= materialEnd() - 0.01 && !(P.loop && P.loop.on && from < P.loop.e)) { toast('Дальше нет звука — поставь курсор раньше'); return; }
   const ctx = getCtx();
   if (ctx.state !== 'running') await ctx.resume();
   stop(false);
@@ -577,7 +602,7 @@ async function play(from = P.playhead, stopAt = Infinity) {
   const L = P.loop;
   T.loop = L && L.on && L.e - L.s > 0.05 && stopAt === Infinity && from < L.e - 0.01 ? { s: L.s, e: L.e } : null;
   T.returnTo = from; T.segs = []; T.srcs = [];
-  T.stopAt = T.loop ? Infinity : Math.min(stopAt, projectEnd() + 0.5);
+  T.stopAt = T.loop ? Infinity : Math.min(stopAt, materialEnd());
   addSeg(from, T.loop ? T.loop.e : Infinity, ctx.currentTime + 0.08);
   pumpLoop();
   S.playing = true; Meter.reset(); updateToolbar(); redraw();
@@ -772,6 +797,15 @@ function draw() {
     x.setLineDash([]);
   }
   for (const c of P.clips) drawClip(c);
+  // crossfades on top: both curves crossing (fade-out of the earlier clip, fade-in of the later one)
+  for (const c of P.clips) {
+    const F = effFades(c), r = clipRect(c); if (r.x > W || r.x + r.w < 0) continue;
+    const top = r.y + HEAD, bot = r.y + r.h, fh = bot - top;
+    x.strokeStyle = '#F4F7F6'; x.lineWidth = 1.6;
+    if (F.xin > 0) { x.beginPath(); for (let i = 0; i <= 24; i++) { const t = F.fin * i / 24, px = r.x + t * S.pps, py = bot - fadeShape(t / F.fin) * fh; i ? x.lineTo(px, py) : x.moveTo(px, py); } x.stroke(); }
+    if (F.xout > 0) { x.beginPath(); for (let i = 0; i <= 24; i++) { const t = F.fout * i / 24, px = r.x + r.w - t * S.pps, py = bot - fadeShape(t / F.fout) * fh; i ? x.lineTo(px, py) : x.moveTo(px, py); } x.stroke(); }
+    x.lineWidth = 1;
+  }
   // edit cursor / play cursor
   const ed = tToX(P.playhead);
   if (ed >= -2 && ed <= W + 2) {
@@ -799,23 +833,34 @@ function drawClip(c) {
   const r = clipRect(c); if (r.x > W || r.x + r.w < 0) return;
   const x = cx, tc = TRACK_COLORS[c.track] || '#999', sel = S.sel.has(c.id), e = buffers.get(c.src), F = effFades(c);
   x.save(); x.beginPath(); x.rect(r.x, r.y, r.w, r.h); x.clip();
-  x.fillStyle = sel ? C.itemSel : C.item; x.fillRect(r.x, r.y, r.w, r.h);
-  x.fillStyle = tc; x.globalAlpha = 0.22; x.fillRect(r.x, r.y, r.w, r.h); x.globalAlpha = 1;
+  // in a crossfade the later clip is see-through, so the earlier clip's fade-out stays visible (crossed fades)
+  const xw = F.xin * S.pps;
+  x.fillStyle = sel ? C.itemSel : C.item; x.globalAlpha = xw > 0 ? 0.45 : 1; x.fillRect(r.x, r.y, xw, r.h); x.globalAlpha = 1; x.fillRect(r.x + xw, r.y, r.w - xw, r.h);
+  x.fillStyle = tc; x.globalAlpha = 0.22; x.fillRect(r.x + xw, r.y, r.w - xw, r.h); x.globalAlpha = 1;
   x.fillStyle = sel ? C.itemHeadSel : C.itemHead; x.fillRect(r.x, r.y, r.w, HEAD);
   x.fillStyle = tc; x.fillRect(r.x, r.y, r.w, 2);
   if (e) {
-    const mid = r.y + HEAD + (r.h - HEAD) / 2, amp = (r.h - HEAD - 4) / 2, lin = dbToLin(c.gain);
+    const lin = dbToLin(c.gain), pk = e.peaks;
     const xa = Math.max(0, Math.floor(r.x)), xb = Math.min(W, Math.ceil(r.x + r.w));
-    x.fillStyle = C.wave;
-    const { mn, mx } = e.peaks;
-    for (let px = xa; px < xb; px++) {
-      const rel = (px - r.x) / S.pps, srcT = c.offset + rel * (c._pv || 1);
-      const b0 = Math.floor(srcT * SR / PEAK_BIN), b1 = Math.max(b0 + 1, Math.floor((srcT + 1 / S.pps) * SR / PEAK_BIN));
-      let lo = 0, hi = 0;
-      for (let b = Math.max(0, b0); b < b1 && b < mn.length; b++) { if (mn[b] < lo) lo = mn[b]; if (mx[b] > hi) hi = mx[b]; }
-      const g = gainAt(c, F, rel) * lin;
-      const y0 = mid - Math.min(1, hi * g) * amp, y1 = mid - Math.max(-1, lo * g) * amp;
-      x.fillRect(px, y0, 1, Math.max(1, y1 - y0));
+    const bodyH = r.h - HEAD;
+    // stereo files get two lanes (L on top, R below), mono files one
+    const lanes = pk.stereo ? [[pk.mnL, pk.mxL, r.y + HEAD + bodyH / 4, (bodyH / 2 - 4) / 2], [pk.mnR, pk.mxR, r.y + HEAD + bodyH * 3 / 4, (bodyH / 2 - 4) / 2]] : [[pk.mn, pk.mx, r.y + HEAD + bodyH / 2, (bodyH - 4) / 2]];
+    for (const [mn, mx, mid, amp] of lanes) {
+      for (let px = xa; px < xb; px++) {
+        const rel = (px - r.x) / S.pps, srcT = c.offset + rel * (c._pv || 1);
+        const b0 = Math.floor(srcT * SR / PEAK_BIN), b1 = Math.max(b0 + 1, Math.floor((srcT + 1 / S.pps) * SR / PEAK_BIN));
+        let lo = 0, hi = 0;
+        for (let b = Math.max(0, b0); b < b1 && b < mn.length; b++) { if (mn[b] < lo) lo = mn[b]; if (mx[b] > hi) hi = mx[b]; }
+        const g = gainAt(c, F, rel) * lin;
+        x.fillStyle = px < r.x + xw ? 'rgba(28,31,32,.7)' : C.wave;
+        const y0 = mid - Math.min(1, hi * g) * amp, y1 = mid - Math.max(-1, lo * g) * amp;
+        x.fillRect(px, y0, 1, Math.max(1, y1 - y0));
+      }
+    }
+    if (pk.stereo) {
+      x.fillStyle = 'rgba(0,0,0,.35)'; x.fillRect(r.x, r.y + HEAD + bodyH / 2, r.w, 1);
+      x.fillStyle = 'rgba(0,0,0,.45)'; x.font = '700 9px -apple-system, system-ui, sans-serif'; x.textBaseline = 'middle';
+      const lx = r.x + 4 + Math.max(0, -r.x); x.fillText('L', lx, r.y + HEAD + 8); x.fillText('R', lx, r.y + HEAD + bodyH / 2 + 8);
     }
   }
   // fade curves
@@ -823,11 +868,11 @@ function drawClip(c) {
   const top = r.y + HEAD, bot = r.y + r.h, fh = bot - top;
   if (F.fin > 0.004) { x.beginPath(); for (let i = 0; i <= 24; i++) { const t = F.fin * i / 24, px = r.x + t * S.pps, py = bot - fadeShape(t / F.fin) * fh; i ? x.lineTo(px, py) : x.moveTo(px, py); } x.stroke(); }
   if (F.fout > 0.004) { x.beginPath(); for (let i = 0; i <= 24; i++) { const t = F.fout * i / 24, px = r.x + r.w - t * S.pps, py = bot - fadeShape(t / F.fout) * fh; i ? x.lineTo(px, py) : x.moveTo(px, py); } x.stroke(); }
-  if (F.xin > 0) { x.fillStyle = 'rgba(98,214,185,.18)'; x.fillRect(r.x, top, F.xin * S.pps, fh); }
+
   x.lineWidth = 1;
   // label
   x.fillStyle = '#121414'; x.font = '600 11px -apple-system, system-ui, sans-serif'; x.textBaseline = 'middle';
-  x.fillText((c.gain ? `[${fmtDb(c.gain)} dB] ` : '') + c.name, r.x + 5 + Math.max(0, -r.x), r.y + 8.5);
+  x.fillText((c.gain ? `[${fmtDb(c.gain)} dB] ` : '') + c.name + (e && e.peaks.stereo ? '  · stereo' : ''), r.x + 5 + Math.max(0, -r.x), r.y + 8.5);
   x.restore();
   x.strokeStyle = sel ? '#F4F7F6' : 'rgba(0,0,0,.55)'; x.lineWidth = sel ? 1.5 : 1;
   x.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1); x.lineWidth = 1;
@@ -1173,6 +1218,21 @@ async function stretchSel(tempo) {
     commit(); renderBar(); redraw(); toast(`Готово: ${pct}% · ${dur.toFixed(2)} с (${mode === 'speech' ? 'речь' : 'SoundTouch'})`, 3000);
   });
 }
+// Clipboard for clips: copy / cut / paste at the edit cursor on the same tracks
+function copySel(silent) {
+  const cs = selClips(); if (!cs.length) { toast('Выдели клипы'); return false; }
+  const base = Math.min(...cs.map((c) => c.start));
+  S.clip = cs.map((c) => ({ ...JSON.parse(JSON.stringify(c)), rel: c.start - base }));
+  if (!silent) toast(cs.length > 1 ? `Скопировано клипов: ${cs.length}` : 'Скопировано');
+  return true;
+}
+function cutSel() { if (copySel(true)) { deleteSel(); toast('Вырезано'); } }
+function pasteClips() {
+  if (!S.clip || !S.clip.length) { toast('Буфер пуст: сначала «Копировать» или «Вырезать»'); return; }
+  const at = P.playhead, ns = new Set();
+  for (const k of S.clip) { const { rel, ...c } = k; const nc = { ...c, id: uid(), start: at + rel }; P.clips.push(nc); ns.add(nc.id); }
+  S.sel = ns; S.inspector = 'clip'; commit(); renderBar(); redraw(); toast('Вставлено');
+}
 function unstretchSel() {
   const cs = selClips().filter((c) => c.orig); if (!cs.length) return;
   for (const c of cs) {
@@ -1503,7 +1563,7 @@ function renderTCP() {
           el('button', { class: 'tname', onclick: () => openFx(t.id) }, t.name),
           el('button', { class: 'fxb' + (active ? ' act' : ''), onclick: () => openFx(t.id), title: 'Цепочка обработки' }, 'FX'),
           el('button', { class: 'addb', onclick: () => fileIn.click(), 'aria-label': 'Добавить файл на дорожку' }, '+'), fileIn),
-        el('div', { class: 'trow' }, vol),
+        el('div', { class: 'trow' }, vol, el('button', { class: 'monob' + (t.mono ? ' on' : ''), title: 'Свести дорожку в моно', onclick: () => { t.mono = !t.mono; commit(); applyLive(); renderTCP(); } }, 'MONO')),
         el('div', { class: 'trow sub' }, volTxt,
           t.kind === 'music' ? el('span', { class: 'grbar', title: 'Подавление музыки голосом' }, el('i', { id: 'duckGr' })) : null)),
       el('div', { class: 'tms' },
@@ -1635,7 +1695,7 @@ function barRegion(box, r) {
       el('button', { class: 'btn', onclick: () => zoomRegion(r) }, 'Показать'),
       el('button', { class: 'btn', onclick: () => loopTo(r.start, r.start + r.len) }, 'Луп'),
       el('button', { class: 'btn primary', onclick: () => duplicateRegion(r), title: 'Копия региона вместе с голосом и музыкой — например, чтобы поменять музыку' }, 'Дублировать регион'),
-      el('button', { class: 'btn', onclick: addVariantSet }, '+ набор 30/15/10/5'),
+      el('button', { class: 'btn', onclick: addVariantSet }, '+ набор 30/20/15/10/5'),
       el('button', { class: 'btn danger', onclick: deleteRegion }, 'Удалить')));
   refreshBar();
 }
@@ -1943,6 +2003,7 @@ function bindUI() {
   $('#bExport').onclick = openExport; $('#bRao').onclick = openRao; $('#projName').onclick = openProjects;
   $('#bStretch').onclick = () => { S.tool = S.tool === 'stretch' ? 'edit' : 'stretch'; updateToolbar(); renderBar(); toast(S.tool === 'stretch' ? 'Растяжение: тяни клип за край — длина меняется вместе со скоростью' : 'Обычный монтаж', 2600); };
   $('#bMulti').onclick = () => { S.multi = !S.multi; updateToolbar(); toast(S.multi ? 'Мультивыбор: тапай клипы по очереди, потом «Склеить»' : 'Мультивыбор выключен', 2600); };
+  $('#bCopy').onclick = () => copySel(); $('#bCut').onclick = cutSel; $('#bPaste').onclick = pasteClips;
   $('#bPresets').onclick = openPresets; $('#bConvert').onclick = openConverter; $('#bLoop').onclick = toggleLoop;
 
 
@@ -1953,6 +2014,9 @@ function bindUI() {
     else if (mod && e.code === 'KeyZ') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     else if (mod && e.code === 'KeyY') { e.preventDefault(); redo(); }
     else if (mod && e.code === 'KeyD') { e.preventDefault(); duplicateSel(); }
+    else if (mod && e.code === 'KeyC') { e.preventDefault(); copySel(); }
+    else if (mod && e.code === 'KeyX') { e.preventDefault(); cutSel(); }
+    else if (mod && e.code === 'KeyV') { e.preventDefault(); pasteClips(); }
     else if (!mod && e.code === 'KeyS') splitAt();
     else if (e.code === 'Delete' || e.code === 'Backspace') { e.preventDefault(); deleteSel(); }
     else if (e.code === 'ArrowLeft') { e.preventDefault(); selClips().length ? nudge(e.shiftKey ? -0.1 : -0.01) : seekTo(P.playhead - (e.shiftKey ? 1 : 0.1)); }
