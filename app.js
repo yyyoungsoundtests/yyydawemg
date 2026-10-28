@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.10.2';
+const APP_VERSION = '0.11.0';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -1061,6 +1061,11 @@ function onUp(e) {
 }
 function endDrag(D) {
   if (!D) return;
+  if (D.reg && !D.moved) { // double tap on a region → type its position / length
+    const now = performance.now();
+    if (Drag.lastReg === D.reg.id && now - Drag.lastRegT < 450) { Drag.lastReg = null; Object.assign(D.reg, D.orig); openRegionEdit(D.reg); return; }
+    Drag.lastReg = D.reg.id; Drag.lastRegT = now;
+  }
   if (D.kind === 'stretch') {
     const c = D.clip, tempo = c._pv; Drag.stretchTxt = null;
     c.dur = D.dur0; delete c._pv;
@@ -1222,6 +1227,32 @@ function drawPen(x) {
 function setPenMode(on) {
   S.pen = on; ls.set('pen', on); Pen.hover = null; Pen.id = null; updateToolbar(); redraw();
   toast(on ? 'Режим Pencil: пальцы — прокрутка и зум, карандаш — монтаж. Быстрая черта сверху вниз — разрезать, зигзаг — удалить, протяжка по пустому — выделить' : 'Режим Pencil выключен — всё как раньше', on ? 5200 : 2000);
+}
+// "1:05.5", "65.5", "65,5" → seconds
+function parseTimeIn(v) {
+  const m = String(v).trim().replace(',', '.').split(':').map(Number);
+  if (m.some((x) => !isFinite(x))) return NaN;
+  return m.reduce((a, x) => a * 60 + x, 0);
+}
+function openRegionEdit(r) {
+  const fmt = (t) => (Math.round(t * 1000) / 1000).toString();
+  const st = el('input', { type: 'text', class: 'txt', inputmode: 'decimal', value: fmt(r.start), style: 'width:8em' });
+  const ln = el('input', { type: 'text', class: 'txt', inputmode: 'decimal', value: fmt(r.len), style: 'width:6em' });
+  const nm = el('input', { type: 'text', class: 'txt', value: r.name, style: 'width:10em' });
+  const ok = () => {
+    const s = parseTimeIn(st.value), l = parseTimeIn(ln.value);
+    if (!isFinite(s) || s < 0 || !isFinite(l) || l < 0.5) { toast('Начало ≥ 0, длина ≥ 0.5 с. Можно писать 65.5 или 1:05.5'); return; }
+    r.start = s; r.len = l; if (nm.value.trim()) r.name = nm.value.trim();
+    S.selRegion = r.id; commit(); closeModal(); renderInspector(); redraw();
+  };
+  for (const i of [st, ln, nm]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
+  modal('Регион', el('div', { class: 'btns col' },
+    el('label', { class: 'cgrp' }, 'Начало', st, 'с'),
+    el('label', { class: 'cgrp' }, 'Длина', ln, 'с'),
+    el('label', { class: 'cgrp' }, 'Название', nm),
+    el('p', { class: 'note' }, 'Секунды (65.5) или минуты:секунды (1:05.5).')),
+    [el('button', { class: 'btn', onclick: closeModal }, 'Отмена'), el('button', { class: 'btn primary', onclick: ok }, 'Готово')]);
+  setTimeout(() => { st.focus(); st.select(); }, 50);
 }
 function seekTo(t) {
   P.playhead = Math.max(0, t);
@@ -1779,6 +1810,7 @@ function openAddTrack() {
     el('button', { class: 'btn big primary', disabled: vLeft <= 0, onclick: () => add('voice') }, `Голос — вся голосовая обработка, посылы на даблер и ревер, музыка уступает (можно ещё ${vLeft})`),
     el('button', { class: 'btn big', disabled: pLeft <= 0, onclick: () => add('mono') }, `Моно — пустая дорожка с эквалайзером (можно ещё ${pLeft})`),
     el('button', { class: 'btn big', disabled: pLeft <= 0, onclick: () => add('stereo') }, `Стерео — пустая дорожка с эквалайзером`),
+    el('button', { class: 'btn big', onclick: () => { closeModal(); openReaperImport(); } }, 'Из проекта REAPER — выбери .RPP вместе с его аудиофайлами или ZIP папки проекта: каждая дорожка придёт пустой, без эффектов, клипы на своих местах'),
     el('p', { class: 'note' }, 'Новый голос копирует обработку основного VOICE. Голос и моно-дорожки всё сводят в моно. Двойной тап по названию — переименовать, «×» — удалить.')));
 }
 function renameTrack(t) {
@@ -2065,7 +2097,8 @@ async function openExport() {
   };
   const bAn = el('button', { class: 'btn', onclick: () => go(false) }, 'Только статистика');
   const bRun = el('button', { class: 'btn primary', onclick: () => go(true) }, 'Рендер');
-  modal('Экспорт регионов', body, [bAn, bRun]);
+  const bRpp = el('button', { class: 'btn', onclick: () => exportReaper(nameIn.value) }, 'Проект для REAPER');
+  modal('Экспорт регионов', body, [bRpp, bAn, bRun]);
 }
 // Result list: each file with its waveform, a play button and ways to save/send it
 function filesPanel(files, title = 'Файлы готовы') {
