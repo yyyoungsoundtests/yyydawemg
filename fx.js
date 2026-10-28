@@ -409,14 +409,19 @@ FXUI.mb = (obj, ctx) => {
   const cols = el('div', { class: 'mbcols' });
   const meters = [];
   const root = el('div', { class: 'pl pl-mb' },
-    el('div', { class: 'plhead mbhead' }, powerBtn(mb, ctx), el('b', { class: 'mblogo' }, 'Dynamics'), el('span', { class: 'mbmode' }, 'Stereo'), el('span', { class: 'dim' }, 'тяни белые ручки — частоты раздела, точки на шкалах — пороги')),
+    el('div', { class: 'plhead mbhead' }, powerBtn(mb, ctx), el('b', { class: 'mblogo' }, 'Dynamics'),
+      el('button', { class: 'mblink' + (mb.link ? ' on' : ''), title: 'Связать полосы: пороги двигаются вместе, остальные параметры одинаковые', onclick: (e) => { mb.link = !mb.link; e.currentTarget.classList.toggle('on', mb.link); ctx.commit(); } }, '⛓ Link Bands'),
+      el('span', { class: 'mbmode' }, 'Stereo'), el('span', { class: 'dim' }, 'тяни белые ручки — частоты раздела, точки на шкалах — пороги')),
     disp, cols);
   const bandName = (i) => { const lo = i ? mb.xo[i - 1] : 20, hi = i < 3 ? mb.xo[i] : 20000; return `${fmtHz(lo)} – ${fmtHz(hi)}`; };
+  const syncers = []; const syncAll = () => syncers.forEach((f) => f());
   const renderCols = () => {
-    cols.innerHTML = ''; meters.length = 0;
+    cols.innerHTML = ''; meters.length = 0; syncers.length = 0;
     B.forEach((b, i) => {
       const col = MB_COLORS[i];
-      const dn = (key, min, max, step, fmt, log) => dragNum({ value: b[key], min, max, step, log, fmt, color: col, onInput: (v) => { b[key] = v; ctx.change(); }, onChange: ctx.commit });
+      const dn = (key, min, max, step, fmt, log) => dragNum({ value: b[key], min, max, step, log, fmt, color: col,
+        onInput: (v) => { if (mb.link) B.forEach((bb) => { bb[key] = v; }); else b[key] = v; ctx.change(); },
+        onChange: () => { ctx.commit(); if (mb.link) renderCols(); } });
       const m = el('canvas', { class: 'mbm' }); meters.push(m);
       const lThr = el('span', { class: 'mono', style: `color:${col}` }), cThr = el('span', { class: 'mono', style: `color:${col}` });
       const sync = () => { lThr.textContent = b.lThr.toFixed(1); cThr.textContent = b.cThr.toFixed(1); };
@@ -429,8 +434,13 @@ FXUI.mb = (obj, ctx) => {
         const yl = -b.lThr / 60 * r.height, yc = -b.cThr / 60 * r.height;
         drag = Math.abs(py - yl) < Math.abs(py - yc) ? 'lThr' : 'cThr'; m.setPointerCapture(e.pointerId);
       });
-      m.addEventListener('pointermove', (e) => { if (!drag) return; const r = m.getBoundingClientRect(); b[drag] = yToDb(e.clientY - r.top, r.height); sync(); ctx.change(); });
+      m.addEventListener('pointermove', (e) => {
+        if (!drag) return; const r = m.getBoundingClientRect(), nv = yToDb(e.clientY - r.top, r.height), d = nv - b[drag];
+        if (mb.link) B.forEach((bb) => { bb[drag] = Math.round(Math.min(0, Math.max(-60, bb[drag] + d)) * 10) / 10; }); else b[drag] = nv;
+        syncAll(); ctx.change();
+      });
       m.addEventListener('pointerup', () => { if (drag) { drag = null; ctx.commit(); } });
+      syncers.push(sync);
       const pw = el('button', { class: 'mbpw' + (b.on !== false ? ' on' : ''), style: `--bc:${col}`, 'aria-label': 'Вкл/выкл полосу', onclick: () => { b.on = b.on === false; pw.classList.toggle('on', b.on !== false); ctx.change(); ctx.commit(); } }, '⏻');
       cols.append(el('div', { class: 'mbcol', style: `--bc:${col}` },
         el('div', { class: 'mbtop' }, pw, el('b', {}, 'Band ' + (i + 1)), el('small', { class: 'dim mbrange' }, bandName(i))),
@@ -711,7 +721,7 @@ FXUI.lim = (obj, ctx) => {
       el('label', { class: 'tog' }, (() => { const c = el('input', { type: 'checkbox', checked: M.autoRms }); c.addEventListener('change', () => { M.autoRms = c.checked; ctx.commit(); }); return c; })(), el('span', {}, 'При экспорте подгонять RMS к')),
       dragNum({ value: M.targetRms, min: -18, max: -6, step: 0.1, fmt: (v) => v.toFixed(1) + ' dB', onInput: (v) => { M.targetRms = v; }, onChange: ctx.commit }),
       el('label', { class: 'tog' }, (() => { const c = el('input', { type: 'checkbox', checked: M.fades }); c.addEventListener('change', () => { M.fades = c.checked; ctx.commit(); }); return c; })(), el('span', {}, 'Фейды 50 мс')),
-      el('span', { class: 'dim' }, 'Gain полос поднимает или опускает частоты перед лимитером. Priority пока только сохраняется, на звук не влияет.')));
+      el('span', { class: 'dim' }, 'Лимитер работает по 6 полосам: Gain поднимает/опускает полосу перед лимитером, Priority — чем выше, тем меньше эту полосу давят, Separation — насколько полосы ограничиваются независимо (High — бас не «качает» голос).')));
   let drag = null;
   const yOf = (db, h) => h / 2 - db / 18 * (h / 2 - 24);
   function drawDisp() {
@@ -747,8 +757,17 @@ FXUI.lim = (obj, ctx) => {
   const hold = [-120, -120, -120, -120];
   const bar = (c, v01, color, fromTop) => { const [x, w, h] = canvas2d(c); x.fillStyle = '#050505'; x.fillRect(0, 0, w, h); x.fillStyle = color; const k = clamp(v01, 0, 1) * h; fromTop ? x.fillRect(1, 0, w - 2, k) : x.fillRect(1, h - k, w - 2, k); };
   let gr = 0;
+  const bgr = [0, 0, 0, 0, 0, 0];
   return { el: root, tick: () => {
     const g = S.playing ? Meter.limGr() : 0; gr += (g - gr) * 0.4;
+    const lm = Meter.gr['master.lim'];
+    if (S.playing || bgr.some((v) => v > 0.05)) {
+      for (let i = 0; i < 6; i++) bgr[i] += ((S.playing && lm && lm.bands ? lm.bands[i] || 0 : 0) - bgr[i]) * 0.35;
+      drawDisp();
+      const [x, w, h] = [disp.getContext('2d'), disp.clientWidth, disp.clientHeight];
+      L.bands.forEach((b, i) => { const px = 30 + fx(b.f, w - 34), hh = Math.min(1, bgr[i] / 12) * (h * 0.42); x.fillStyle = L3_COLORS[i] + 'AA'; x.fillRect(px - 7, 12, 14, hh); });
+      x.fillStyle = 'rgba(255,255,255,.55)'; x.font = '10px ui-monospace, Menlo, monospace'; x.fillText('ограничение по полосам ↓', w - 170, 22);
+    }
     const pl = S.playing ? linToDb(Meter.pkL) : -120, pr = S.playing ? linToDb(Meter.pkR) : -120;
     const il = pl + gr + L.thresh, ir = pr + gr + L.thresh; // level before the threshold gain
     const sc = (d) => (d + 30) / 30;
@@ -759,6 +778,99 @@ FXUI.lim = (obj, ctx) => {
     roAt.textContent = gr.toFixed(1);
     if (!S.playing) hold.fill(-120);
   } };
+};
+
+/* ---- Auto Balance (automatic tonal balance EQ) ---- */
+FXUI.tonal = (obj, ctx) => {
+  const T = obj.tonal;
+  const c = el('canvas', { class: 'tbc' });
+  const slider = (key, label, min, max, def, fmt, hint) => {
+    const val = el('b', { class: 'mono' }, fmt(T[key]));
+    const r = el('input', { type: 'range', class: 'tbr', min, max, step: 1, value: T[key] });
+    r.addEventListener('input', () => { T[key] = +r.value; val.textContent = fmt(T[key]); ctx.change(); });
+    r.addEventListener('change', ctx.commit);
+    r.addEventListener('dblclick', () => { T[key] = def; r.value = def; val.textContent = fmt(def); ctx.change(); ctx.commit(); });
+    return el('label', { class: 'tbrow' }, el('span', { class: 'tbl' }, label, el('small', {}, hint)), r, val);
+  };
+  const root = el('div', { class: 'pl pl-tb' },
+    el('div', { class: 'plhead' }, powerBtn(T, ctx), el('b', { class: 'tblogo' }, 'Auto Balance'), el('span', { class: 'dim' }, 'сам держит тональный баланс мастера — страховка на плохом контроле')),
+    c,
+    el('div', { class: 'tbsl' },
+      slider('recover', 'Recover', 0, 100, 30, (v) => v, 'поднимает то, чего не хватает'),
+      slider('tame', 'Tame', 0, 100, 40, (v) => v, 'убирает то, что выпирает, и резонансы'),
+      slider('bias', 'Bias', -100, 100, 0, (v) => (v > 0 ? '+' : '') + v, '− больше подъёма, + больше среза'),
+      slider('brighten', 'Brighten', -100, 100, 0, (v) => (v > 0 ? '+' : '') + v, 'наклон: темнее ↔ ярче'),
+      slider('boost', 'Boost', -6, 6, 0, (v) => (v > 0 ? '+' : '') + v + ' dB', 'громкость на выходе')),
+    el('p', { class: 'note' }, 'Жёлтая линия — к какому балансу стремимся, серая — что звучит сейчас, цветная заливка — что Auto Balance делает: оранжевое режет, голубое поднимает. Максимум ±6 дБ, меняется плавно.'));
+  let sm = null;
+  return { el: root, tick: () => {
+    const [x, w, h] = canvas2d(c);
+    const g = x.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#0E1A2B'); g.addColorStop(1, '#09111C');
+    x.fillStyle = g; x.fillRect(0, 0, w, h);
+    freqGrid(x, w, h, 'rgba(255,255,255,.05)', 'rgba(255,255,255,.35)');
+    const mid = h * 0.5, yOf = (db) => mid - db / 12 * (h * 0.42);
+    for (const d of [-6, 0, 6]) { x.fillStyle = d ? 'rgba(255,255,255,.06)' : 'rgba(255,255,255,.18)'; x.fillRect(0, Math.round(yOf(d)), w, 1); x.fillStyle = 'rgba(255,255,255,.35)'; x.fillText((d > 0 ? '+' : '') + d, 4, yOf(d) - 3); }
+    const m = ctx.gr('tonal');
+    if (!m || !m.freqs) { x.fillStyle = 'rgba(255,255,255,.45)'; x.font = '12px -apple-system, system-ui, sans-serif'; x.fillText('Нажми Play — здесь появится анализ', 14, 22); return; }
+    const n = m.freqs.length;
+    if (!sm) sm = { c: new Float32Array(n), me: new Float32Array(n), t: new Float32Array(n) };
+    for (let i = 0; i < n; i++) { sm.c[i] += ((S.playing ? m.corr[i] : sm.c[i]) - sm.c[i]) * 0.3; sm.me[i] += (m.meas[i] - sm.me[i]) * 0.2; sm.t[i] = m.tgt[i]; }
+    const px = (i) => fx2x(m.freqs[i], w);
+    const curve = (arr, k, color, lw) => { x.strokeStyle = color; x.lineWidth = lw; x.beginPath(); for (let i = 0; i < n; i++) { const y = yOf(arr[i] * k); i ? x.lineTo(px(i), y) : x.moveTo(px(i), y); } x.stroke(); };
+    curve(sm.me, 0.5, 'rgba(200,210,225,.45)', 1.5);
+    curve(sm.t, 0.5, '#F2C94C', 2);
+    for (let i = 0; i < n - 1; i++) {
+      const a = sm.c[i], b = sm.c[i + 1];
+      x.fillStyle = (a + b) / 2 < 0 ? 'rgba(255,140,60,.55)' : 'rgba(80,190,255,.55)';
+      x.beginPath(); x.moveTo(px(i), mid); x.lineTo(px(i), yOf(a)); x.lineTo(px(i + 1), yOf(b)); x.lineTo(px(i + 1), mid); x.fill();
+    }
+    curve(sm.c, 1, '#FFFFFF', 1.5);
+    x.lineWidth = 1;
+  } };
+};
+
+/* ---- Sends: doubler & reverb (shared return buses) ---- */
+FXUI.sends = (obj, ctx) => {
+  const sd = obj.sends, B = P.master.bus;
+  const offFmt = (v) => (v <= -59.5 ? 'Off' : (v > 0 ? '+' : '') + v.toFixed(1) + ' dB');
+  const k = (o, key, label, min, max, def, fmt, log, size = 62, cls = 'k-snd') => knob({ value: o[key], min, max, def, log, size, cls, label, fmt, onInput: (v) => { o[key] = v; ctx.change(); if (o === B.rev) drawIR(); }, onChange: ctx.commit });
+  const irC = el('canvas', { class: 'sndir' });
+  function drawIR() {
+    const [x, w, h] = canvas2d(irC); x.fillStyle = '#0D1A1C'; x.fillRect(0, 0, w, h);
+    const r = B.rev, oc = new OfflineAudioContext(2, 1, 48000), ir = makeIR(oc, r), d = ir.getChannelData(0), total = (r.predelay / 1000) + ir.duration;
+    const step = d.length / (w * (ir.duration / total)), x0 = (r.predelay / 1000) / total * w;
+    x.fillStyle = 'rgba(94,214,190,.25)'; x.fillRect(0, h - 2, x0, 2);
+    x.fillStyle = '#5ED6BE';
+    for (let px = 0; px < w - x0; px++) { let m = 0; for (let j = Math.floor(px * step); j < Math.floor((px + 1) * step) && j < d.length; j++) m = Math.max(m, Math.abs(d[j])); const hh = Math.min(1, m * 3) * (h - 6); x.fillRect(x0 + px, h - hh, 1, hh); }
+    x.fillStyle = 'rgba(255,255,255,.5)'; x.font = '10px ui-monospace, Menlo, monospace'; x.fillText(`хвост ${r.decay.toFixed(2)} с · pre ${Math.round(r.predelay)} мс`, 8, 14);
+  }
+  const root = el('div', { class: 'pl pl-snd' },
+    el('div', { class: 'plhead' }, powerBtn(sd, ctx), el('b', {}, 'Sends'), el('span', { class: 'dim' }, `посылы с дорожки «${obj.name}» на общие даблер и ревер`)),
+    el('div', { class: 'sndrow' },
+      el('div', { class: 'sndcard send' }, el('h5', {}, 'Посыл этой дорожки'),
+        el('div', { class: 'sndknobs' },
+          k(sd, 'dbl', 'НА ДАБЛЕР', -60, 6, -60, offFmt, false, 84, 'k-snd big'),
+          k(sd, 'rev', 'НА РЕВЕР', -60, 6, -60, offFmt, false, 84, 'k-snd big')),
+        el('p', { class: 'note' }, 'Повернул вверх — голос пошёл в эффект. Для дикторского голоса обычно хватает −18…−10 дБ.')),
+      el('div', { class: 'sndcard' }, el('h5', {}, 'Doubler', el('small', {}, 'общий для обоих голосов')),
+        el('div', { class: 'sndknobs' },
+          k(B.dbl, 'delay', 'DELAY', 5, 40, 14, (v) => v.toFixed(1) + ' ms'),
+          k(B.dbl, 'detune', 'DETUNE', 0, 25, 8, (v) => v.toFixed(1) + ' ct'),
+          k(B.dbl, 'width', 'WIDTH', 0, 100, 100, (v) => Math.round(v) + '%'),
+          k(B.dbl, 'ret', 'RETURN', -24, 6, 0, (v) => (v > 0 ? '+' : '') + v.toFixed(1) + ' dB')),
+        el('p', { class: 'note' }, 'Две слегка «плавающие» копии голоса слева и справа — голос толще и шире, но остаётся в центре.'))),
+    el('div', { class: 'sndcard' }, el('h5', {}, 'Reverb', el('small', {}, 'общий для обоих голосов')),
+      irC,
+      el('div', { class: 'sndknobs' },
+        k(B.rev, 'decay', 'DECAY', 0.2, 4, 1.2, (v) => v.toFixed(2) + ' s', true),
+        k(B.rev, 'predelay', 'PRE-DELAY', 0, 100, 20, (v) => Math.round(v) + ' ms'),
+        k(B.rev, 'tone', 'TONE', 1500, 12000, 6000, (v) => (v / 1000).toFixed(1) + ' kHz', true),
+        k(B.rev, 'lowcut', 'LOW CUT', 50, 1000, 250, (v) => Math.round(v) + ' Hz', true),
+        k(B.rev, 'width', 'WIDTH', 0, 100, 100, (v) => Math.round(v) + '%'),
+        k(B.rev, 'ret', 'RETURN', -24, 6, 0, (v) => (v > 0 ? '+' : '') + v.toFixed(1) + ' dB')),
+      el('p', { class: 'note' }, 'Короткий хвост 0.6–1.2 с и Low cut 250–400 Гц дают «воздух» без гула. Pre-delay 15–30 мс отделяет ревер от голоса, чтобы речь оставалась разборчивой.')));
+  requestAnimationFrame(drawIR);
+  return { el: root };
 };
 
 /* ---- Audio statistics ---- */

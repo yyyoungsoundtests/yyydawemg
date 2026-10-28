@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.6.0';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -65,7 +65,7 @@ const ls = {
 const TRACK_COLORS = { v1: '#D6A544', v2: '#D07454', mu: '#4BAE98', fx: '#9D90D8' };
 const eqBand = (type, f, g = 0, q = 1, on = true) => ({ type, f, g, q, on });
 function defaultEQ(kind) {
-  if (kind === 'voice') return [eqBand('highpass', 80, 0, 0.71), eqBand('lowshelf', 180, 0), eqBand('peaking', 350, -2, 1.2), eqBand('peaking', 3200, 2, 1), eqBand('highshelf', 9000, 2), eqBand('lowpass', 18000, 0, 0.71, false)];
+  if (kind === 'voice') return [eqBand('highpass', 50, 0, 0.71), eqBand('lowshelf', 180, 0), eqBand('peaking', 350, -2, 1.2), eqBand('peaking', 3200, 2, 1), eqBand('highshelf', 9000, 2), eqBand('lowpass', 18000, 0, 0.71, false)];
   if (kind === 'radio') return [eqBand('highpass', 380, 0, 0.9), eqBand('peaking', 900, -2, 1.4), eqBand('peaking', 1800, 5, 0.9), eqBand('lowpass', 3600, 0, 1.1)];
   if (kind === 'music') return [eqBand('highpass', 35, 0, 0.71), eqBand('peaking', 250, 0, 1), eqBand('peaking', 2500, 0, 1), eqBand('highshelf', 10000, 0)];
   if (kind === 'master') return [eqBand('highpass', 30, 0, 0.71), eqBand('lowshelf', 120, 0), eqBand('peaking', 3000, 0, 1), eqBand('highshelf', 12000, 0)];
@@ -86,6 +86,9 @@ const DEF = {
   mb: () => ({ on: true, xo: [100, 580, 4500], bands: [0, 1, 2, 3].map(() => DEF.mbBand()) }),
   sh: () => ({ on: true, oOn: true, oThr: 9, oGain: 7, dOn: true, dThr: 9, dRatio: 2, dAtt: 5, dRec: 0, dGain: 7, xf: 0, mix: 100 }),
   la2a: () => ({ on: false, peak: 40, gain: 50, limit: false, meter: 'gr' }),
+  tonal: () => ({ on: true, recover: 30, tame: 40, bias: 0, brighten: 0, boost: 0 }),
+  sends: () => ({ on: true, dbl: -60, rev: -60 }),
+  bus: () => ({ dbl: { delay: 14, detune: 8, width: 100, ret: 0 }, rev: { decay: 1.2, predelay: 20, tone: 6000, lowcut: 250, width: 100, ret: 0 } }),
   limBands: () => [[100, 'lowshelf'], [200, 'peaking'], [400, 'peaking'], [800, 'peaking'], [1600, 'peaking'], [3200, 'highshelf']].map(([f, type]) => ({ on: true, prio: 0, gain: 0, f, q: 1, type })),
   lim: () => ({ on: true, thresh: -7, ceiling: -1, release: 1, character: 'Default', separation: 'Medium', quantize: 24, dither: 'Type1', shaping: 'Normal', idr: true, bands: DEF.limBands() }),
 };
@@ -122,14 +125,14 @@ function newProject(name = 'Новый ролик') {
 }
 function baseProject(name) {
   return {
-    id: uid(), name, created: Date.now(), updated: Date.now(), v: 3, loop: { s: 0, e: 0, on: false },
+    id: uid(), name, created: Date.now(), updated: Date.now(), v: 5, loop: { s: 0, e: 0, on: false },
     tracks: [
-      { id: 'v1', name: 'Голос', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('voice') }, vox: DEF.vox(-12), la2a: DEF.la2a(), deess: DEF.deessVoice(), drive: DEF.drive(0) },
-      { id: 'v2', name: 'Голос радио', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('radio') }, vox: DEF.vox(-15), la2a: DEF.la2a(), deess: DEF.deessVoice(), drive: DEF.drive(0.35) },
+      { id: 'v1', name: 'Голос', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('voice') }, vox: DEF.vox(-12), la2a: DEF.la2a(), deess: DEF.deessVoice(), drive: DEF.drive(0), sends: DEF.sends() },
+      { id: 'v2', name: 'Голос радио', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('radio') }, vox: DEF.vox(-15), la2a: DEF.la2a(), deess: DEF.deessVoice(), drive: { on: false, amount: 0.35 }, sends: DEF.sends() },
       { id: 'mu', name: 'Музыка', kind: 'music', vol: -12, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('music') }, duck: DEF.duck() },
       { id: 'fx', name: 'Эффекты', kind: 'fx', vol: 0, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('fx') } },
     ],
-    master: { mb: DEF.mb(), eq: { on: true, bands: defaultEQ('master') }, deess: DEF.deessMaster(), sh: DEF.sh(), lim: DEF.lim(), autoRms: true, targetRms: -10.5, fades: true, format: 'wav' },
+    master: { bus: DEF.bus(), mb: DEF.mb(), eq: { on: true, bands: defaultEQ('master') }, tonal: DEF.tonal(), deess: DEF.deessMaster(), sh: { ...DEF.sh(), on: false }, lim: DEF.lim(), autoRms: true, targetRms: -10.5, fades: true, format: 'wav' },
     clips: [], regions: makeRegionSet(0, 1), files: {}, playhead: 0,
   };
 }
@@ -140,6 +143,16 @@ function migrate(p) {
     for (const t of p.tracks) if (t.kind === 'voice' && !t.la2a) t.la2a = DEF.la2a();
     upgradeLim(p.master);
     p.v = 3;
+  }
+  if (p.v < 4) {
+    p.master.tonal = p.master.tonal || DEF.tonal();
+    for (const t of p.tracks) if (t.kind === 'voice') { const b = t.eq && t.eq.bands && t.eq.bands[0]; if (b && b.type === 'highpass' && b.f === 80) b.f = 50; }
+    p.v = 4;
+  }
+  if (p.v < 5) {
+    for (const t of p.tracks) if (t.kind === 'voice' && !t.sends) t.sends = DEF.sends();
+    p.master.bus = p.master.bus || DEF.bus();
+    p.v = 5;
   }
   if (!p.loop) p.loop = { s: 0, e: 0, on: false };
   return p;
@@ -168,10 +181,10 @@ function migrateV1(p) {
   p.v = 2;
 }
 // FX chains in processing order (shown like Reaper's FX chain)
-const FX_NAMES = { declick: 'De-crackle', eq: 'Parametric EQ', vox: 'Vocal Leveler', deess: 'De-Esser', drive: 'Saturation', duck: 'Spectral Ducker', mb: 'Multiband Dynamics', sh: 'Opto/Discrete Comp', lim: 'Multimaximizer', stats: 'Audio Statistics', la2a: 'Opto Leveler 2A' };
+const FX_NAMES = { declick: 'De-crackle', eq: 'Parametric EQ', vox: 'Vocal Leveler', deess: 'De-Esser', drive: 'Saturation', duck: 'Spectral Ducker', mb: 'Multiband Dynamics', sh: 'Opto/Discrete Comp', tonal: 'Auto Balance', lim: 'Multimaximizer', stats: 'Audio Statistics', la2a: 'Opto Leveler 2A', sends: 'Sends: Doubler · Reverb' };
 function chainFor(t) {
-  if (t === 'master') return ['mb', 'eq', 'deess', 'sh', 'lim', 'stats'];
-  if (t.kind === 'voice') return ['declick', 'eq', 'vox', 'la2a', 'deess', 'drive'];
+  if (t === 'master') return ['mb', 'eq', 'tonal', 'deess', 'lim', 'stats'];
+  if (t.kind === 'voice') return ['declick', 'eq', 'vox', 'la2a', 'deess', 'drive', 'sends'];
   if (t.kind === 'music') return ['eq', 'duck'];
   return ['eq'];
 }
@@ -289,9 +302,9 @@ async function ensureWorklet(ctx) {
   await workletReady.get(ctx);
 }
 // Fixed processing latencies in samples (must match dsp.js)
-const LAT = { declick: 64, deess: 720, duck: 1024, lim: 69 };
+const LAT = { declick: 64, deess: 720, duck: 1024, tonal: 1024, lim: 69 };
 const VOICE_LAT = LAT.declick + LAT.deess;
-const TOTAL_LAT = VOICE_LAT + LAT.duck + LAT.deess + LAT.lim;
+const TOTAL_LAT = VOICE_LAT + LAT.duck + LAT.tonal + LAT.deess + LAT.lim;
 const latency = (ctx) => TOTAL_LAT / (ctx ? ctx.sampleRate : SR);
 
 function setBand(node, b) {
@@ -321,7 +334,8 @@ const PR = {
     const s = m.sh;
     return { on: s.on, oOn: s.oOn, oThr: shThrDb(s.oThr), oGain: shGainDb(s.oGain), dOn: s.dOn, dThr: shThrDb(s.dThr), dRatio: SH_RATIOS[s.dRatio], dAtt: SH_ATTS[s.dAtt], dRec: SH_RECS[s.dRec], dGain: shGainDb(s.dGain), xf: s.xf, mix: s.mix / 100 };
   },
-  lim: (m, ov = {}) => ({ on: m.lim.on !== false, gain: ov.limGain ?? -m.lim.thresh, ceiling: m.lim.ceiling, release: limMs(m.lim), arc: (LIM_CHAR[m.lim.character] || LIM_CHAR.Default)[1] }),
+  lim: (m, ov = {}) => ({ on: m.lim.on !== false, gain: ov.limGain ?? -m.lim.thresh, ceiling: m.lim.ceiling, release: limMs(m.lim), arc: (LIM_CHAR[m.lim.character] || LIM_CHAR.Default)[1], separation: m.lim.separation, bands: m.lim.bands.map((b) => ({ ...b })) }),
+  tonal: (m) => ({ ...m.tonal }),
   la2a: (t) => ({ ...t.la2a }),
 };
 
@@ -341,11 +355,10 @@ async function buildGraph(ctx, live, ov = {}) {
   m.mb = W('efir-mb', PR.mb(M), 'master.mb');
   m.eq = makeEQ(ctx);
   m.deess = W('efir-deess', PR.deess(M.deess), 'master.deess');
-  m.sh = W('efir-sh', PR.sh(M), 'master.sh');
+  m.tonal = W('efir-tonal', PR.tonal(M), 'master.tonal');
   m.lim = W('efir-limiter', PR.lim(M, ov), 'master.lim');
-  m.l3 = []; for (let i = 0; i < 6; i++) { m.l3.push(ctx.createBiquadFilter()); if (i) m.l3[i - 1].connect(m.l3[i]); }
-  m.input.connect(m.mb); m.mb.connect(m.eq[0]); m.eq[MAXB - 1].connect(m.deess); m.deess.connect(m.sh); m.sh.connect(m.l3[0]); m.l3[5].connect(m.lim); m.lim.connect(ctx.destination);
-  g.workers.push(m.mb, m.deess, m.sh, m.lim);
+  m.input.connect(m.mb); m.mb.connect(m.eq[0]); m.eq[MAXB - 1].connect(m.tonal); m.tonal.connect(m.deess); m.deess.connect(m.lim); m.lim.connect(ctx.destination);
+  g.workers.push(m.mb, m.tonal, m.deess, m.lim);
   if (live) {
     m.anIn = an(); m.input.connect(m.anIn);
     m.anEq = an(); m.eq[MAXB - 1].connect(m.anEq);
@@ -355,6 +368,22 @@ async function buildGraph(ctx, live, ov = {}) {
   }
   g.master = m;
   const sc = ctx.createGain();
+  // Send buses (doubler, reverb): their returns are delayed like the voices so everything stays aligned
+  const B = M.bus || DEF.bus(), bus = {};
+  bus.dIn = ctx.createGain(); bus.dIn.channelCount = 1; bus.dIn.channelCountMode = 'explicit'; bus.dIn.channelInterpretation = 'speakers';
+  bus.dOut = ctx.createGain();
+  bus.dl = [0, 1].map((i) => {
+    const d = ctx.createDelay(0.2), lfo = ctx.createOscillator(), depth = ctx.createGain(), pan = ctx.createStereoPanner();
+    lfo.frequency.value = i ? 0.43 : 0.31; lfo.connect(depth); depth.connect(d.delayTime); lfo.start(0);
+    bus.dIn.connect(d); d.connect(pan); pan.connect(bus.dOut);
+    return { d, depth, pan, lfo };
+  });
+  bus.rIn = ctx.createGain(); bus.rPre = ctx.createDelay(0.5); bus.rLow = ctx.createBiquadFilter(); bus.rLow.type = 'highpass';
+  bus.rConv = ctx.createConvolver(); bus.rOut = ctx.createGain();
+  bus.rIn.connect(bus.rPre); bus.rPre.connect(bus.rLow); bus.rLow.connect(bus.rConv); bus.rConv.connect(bus.rOut);
+  bus.out = ctx.createGain(); bus.dOut.connect(bus.out); bus.rOut.connect(bus.out);
+  bus.post = delay(LAT.duck); bus.out.connect(bus.post); bus.post.connect(m.input);
+  g.bus = bus;
   for (const t of P.tracks) {
     const n = { input: ctx.createGain(), eq: makeEQ(ctx), vol: ctx.createGain(), pan: ctx.createStereoPanner() };
     if (t.kind === 'voice') {
@@ -366,17 +395,20 @@ async function buildGraph(ctx, live, ov = {}) {
       n.input.connect(n.declick); n.declick.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vox); n.vox.connect(n.la2a); n.la2a.connect(n.deess); n.deess.connect(n.drive); n.drive.connect(n.vol);
       n.vol.connect(n.pan);
       n.post = delay(LAT.duck); n.pan.connect(n.post); n.post.connect(m.input);
+      n.sendD = ctx.createGain(); n.sendR = ctx.createGain();
+      n.pan.connect(n.sendD); n.sendD.connect(bus.dIn); n.pan.connect(n.sendR); n.sendR.connect(bus.rIn);
+      n.out = n.post;
       n.pan.connect(sc);
       g.workers.push(n.declick, n.vox, n.la2a, n.deess);
     } else if (t.kind === 'music') {
       n.input.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vol); n.vol.connect(n.pan);
       n.pre = delay(VOICE_LAT); n.pan.connect(n.pre);
       n.duck = W('efir-ducker', PR.duck(t), t.id + '.duck', 2);
-      n.pre.connect(n.duck, 0, 0); n.duck.connect(m.input);
+      n.pre.connect(n.duck, 0, 0); n.duck.connect(m.input); n.out = n.duck;
       g.workers.push(n.duck);
     } else {
       n.input.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vol); n.vol.connect(n.pan);
-      n.post = delay(VOICE_LAT + LAT.duck); n.pan.connect(n.post); n.post.connect(m.input);
+      n.post = delay(VOICE_LAT + LAT.duck); n.pan.connect(n.post); n.post.connect(m.input); n.out = n.post;
     }
     if (live) { n.an = an(); n.eq[MAXB - 1].connect(n.an); }
     g.tracks[t.id] = n;
@@ -400,18 +432,62 @@ function applyGraph(g, ov = {}) {
       n.la2a.port.postMessage(PR.la2a(t));
       n.deess.port.postMessage(PR.deess(t.deess));
       n.drive.curve = t.drive.on ? driveCurve(t.drive.amount) : null;
+      const sd = t.sends || DEF.sends(), son = sd.on !== false;
+      n.sendD.gain.value = son && sd.dbl > -59.5 ? dbToLin(sd.dbl) : 0;
+      n.sendR.gain.value = son && sd.rev > -59.5 ? dbToLin(sd.rev) : 0;
     }
     if (t.kind === 'music') n.duck.port.postMessage(PR.duck(t));
   }
   const M = P.master, m = g.master;
+  applyBus(g.bus, M.bus || DEF.bus(), g.ctx);
   m.mb.port.postMessage(PR.mb(M));
   applyEQ(m.eq, M.eq);
   m.deess.port.postMessage(PR.deess(M.deess));
-  m.sh.port.postMessage(PR.sh(M));
-  M.lim.bands.forEach((b, i) => setBand(m.l3[i], M.lim.on !== false && b.on !== false ? { ...b, g: b.gain, on: true } : null));
+  m.tonal.port.postMessage(PR.tonal(M));
   m.lim.port.postMessage(PR.lim(M, ov));
 }
+// Reverb impulse response: early reflections + decorrelated noise tail that gets darker as it decays
+const irCache = new Map();
+function makeIR(ctx, r) {
+  const key = [ctx.sampleRate, r.decay, r.tone, r.width].join('|');
+  if (irCache.has(key)) return irCache.get(key);
+  const sr = ctx.sampleRate, len = Math.round(sr * (r.decay * 1.3 + 0.05));
+  const ir = ctx.createBuffer(2, len, sr);
+  let seed = 12345; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff * 2 - 1; };
+  const w = r.width / 100;
+  const early = [7, 11, 17, 23, 31, 41, 53].map((ms, i) => [Math.round(ms * sr / 1000), (i % 2 ? -1 : 1) * 0.6 * Math.pow(0.82, i)]);
+  const L = ir.getChannelData(0), R = ir.getChannelData(1);
+  let lpL = 0, lpR = 0;
+  for (let i = 0; i < len; i++) {
+    const t = i / sr, env = Math.exp(-6.91 * t / r.decay) * Math.min(1, t / 0.008);
+    const fc = r.tone * Math.exp(-t / (r.decay * 0.9)) + 600;
+    const a = 1 - Math.exp(-2 * Math.PI * fc / sr);
+    const nl = rnd(), nr = rnd() * w + nl * (1 - w);
+    lpL += (nl - lpL) * a; lpR += (nr - lpR) * a;
+    L[i] = lpL * env; R[i] = lpR * env;
+  }
+  for (const [n, gain] of early) if (n < len) { L[n] += gain; R[Math.min(len - 1, n + Math.round(w * 0.0007 * sr))] += gain * (w ? -1 : 1) * 0.9; }
+  irCache.set(key, ir);
+  if (irCache.size > 12) irCache.delete(irCache.keys().next().value);
+  return ir;
+}
+function applyBus(bus, B, ctx) {
+  const d = B.dbl, r = B.rev;
+  bus.dl.forEach((x, i) => {
+    const base = (d.delay + (i ? 7 : 0)) / 1000, f = x.lfo.frequency.value;
+    x.d.delayTime.value = base;
+    x.depth.gain.value = (Math.pow(2, d.detune / 1200) - 1) / (2 * Math.PI * f);
+    x.pan.pan.value = (i ? 1 : -1) * d.width / 100;
+  });
+  bus.dOut.gain.value = dbToLin(d.ret) * 0.7;
+  bus.rPre.delayTime.value = r.predelay / 1000;
+  bus.rLow.frequency.value = r.lowcut;
+  const ir = makeIR(ctx, r);
+  if (bus.rConv.buffer !== ir) bus.rConv.buffer = ir;
+  bus.rOut.gain.value = dbToLin(r.ret) * 0.5;
+}
 function killGraph(g) {
+  if (g.bus) for (const x of g.bus.dl) { try { x.lfo.stop(); } catch {} }
   for (const w of g.workers) { try { w.port.postMessage({ dead: true }); w.disconnect(); } catch {} }
 }
 
@@ -682,6 +758,11 @@ function draw() {
     if (ph >= -2 && ph <= W + 2) { x.fillStyle = C.play; x.fillRect(Math.round(ph) - 0.5, 0, 1.5, Hh); }
   }
   if (Drag.snapX != null) { x.fillStyle = 'rgba(255,255,255,.7)'; x.fillRect(Math.round(Drag.snapX), TOP, 1, Hh - TOP); }
+  if (Drag.stretchTxt && Drag.active && Drag.active.clip) {
+    const r = clipRect(Drag.active.clip); x.font = '700 13px -apple-system, system-ui, sans-serif';
+    const tw = x.measureText(Drag.stretchTxt).width + 16, bx = Math.min(W - tw - 4, Math.max(4, r.x + r.w - tw)), by = r.y + HEAD + 6;
+    x.fillStyle = '#FFD65A'; x.fillRect(bx, by, tw, 22); x.fillStyle = '#1B1608'; x.textBaseline = 'middle'; x.fillText(Drag.stretchTxt, bx + 8, by + 11);
+  }
   x.fillStyle = '#121314'; x.fillRect(0, TOP - 1, W, 1);
 }
 function clipRect(c) {
@@ -703,7 +784,7 @@ function drawClip(c) {
     x.fillStyle = C.wave;
     const { mn, mx } = e.peaks;
     for (let px = xa; px < xb; px++) {
-      const rel = (px - r.x) / S.pps, srcT = c.offset + rel;
+      const rel = (px - r.x) / S.pps, srcT = c.offset + rel * (c._pv || 1);
       const b0 = Math.floor(srcT * SR / PEAK_BIN), b1 = Math.max(b0 + 1, Math.floor((srcT + 1 / S.pps) * SR / PEAK_BIN));
       let lo = 0, hi = 0;
       for (let b = Math.max(0, b0); b < b1 && b < mn.length; b++) { if (mn[b] < lo) lo = mn[b]; if (mx[b] > hi) hi = mx[b]; }
@@ -733,18 +814,19 @@ function drawClip(c) {
   }
 }
 
-function snapPoints(exclClips, exclReg) {
+function snapPoints(exclClips, exclReg, track = null) {
   const pts = [0, P.playhead];
   for (const r of P.regions) if (r.id !== exclReg) pts.push(r.start, r.start + r.len);
-  for (const c of P.clips) if (!exclClips.has(c.id)) pts.push(c.start, c.start + c.dur);
+  for (const c of P.clips) if (!exclClips.has(c.id) && c.track !== track) pts.push(c.start, c.start + c.dur);
   return pts;
 }
+const snapSec = (t) => (S.snap ? Math.round(t) : Math.round(t * 100) / 100);
 // Snaps t (and optionally t+len) to the nearest edge; remembers where to draw the guide line.
-function snapTime(t, exclClips = new Set(), len = null, exclReg = null) {
+function snapTime(t, exclClips = new Set(), len = null, exclReg = null, track = null) {
   Drag.snapX = null;
   if (!S.snap) return t;
   let best = t, bd = (isTouch ? 14 : 9) / S.pps, line = null;
-  for (const p of snapPoints(exclClips, exclReg)) {
+  for (const p of snapPoints(exclClips, exclReg, track)) {
     const d = Math.abs(p - t); if (d < bd) { bd = d; best = p; line = p; }
     if (len != null) { const d2 = Math.abs(p - (t + len)); if (d2 < bd) { bd = d2; best = p - len; line = p; } }
   }
@@ -791,7 +873,8 @@ function onDown(e) {
     const h = hitClip(px, py);
     if (h) {
       const { c, r } = h;
-      if (e.shiftKey) { S.sel.has(c.id) ? S.sel.delete(c.id) : S.sel.add(c.id); }
+      D.shift = e.shiftKey || S.multi;
+      if (D.shift) { S.sel.has(c.id) && S.sel.size > 1 ? S.sel.delete(c.id) : S.sel.add(c.id); }
       else if (!S.sel.has(c.id)) S.sel = new Set([c.id]);
       S.inspector = 'clip'; renderInspector();
       const edge = Math.min(isTouch ? 18 : 9, r.w / 4);
@@ -799,6 +882,7 @@ function onDown(e) {
       const fadeZone = py < r.y + 26;
       if (fadeZone && Math.abs(px - fiX) < (isTouch ? 16 : 8) && S.sel.has(c.id)) D.kind = 'fadeIn';
       else if (fadeZone && Math.abs(px - foX) < (isTouch ? 16 : 8) && S.sel.has(c.id)) D.kind = 'fadeOut';
+      else if (S.tool === 'stretch') { D.kind = 'stretch'; D.dur0 = c.dur; S.sel = new Set([c.id]); }
       else if (px - r.x < edge) D.kind = 'trimL';
       else if (r.x + r.w - px < edge) D.kind = 'trimR';
       else D.kind = 'move';
@@ -837,13 +921,13 @@ function onMove(e) {
       updateToolbar(); break;
     }
     case 'pan': case 'empty': S.x0 = D.x00 - dt; break;
-    case 'regMove': D.reg.start = Math.max(0, snapTime(D.orig.start + dt, new Set(), D.orig.len, D.reg.id)); break;
-    case 'regLen': D.reg.len = Math.max(0.5, snapTime(D.orig.start + D.orig.len + dt, new Set(), null, D.reg.id) - D.reg.start); break;
+    case 'regMove': D.reg.start = Math.max(0, snapSec(D.orig.start + dt)); Drag.snapX = tToX(D.reg.start); break;
+    case 'regLen': D.reg.len = Math.max(1, snapSec(D.orig.start + D.orig.len + dt - D.reg.start)); Drag.snapX = tToX(D.reg.start + D.reg.len); break;
     case 'move': {
       const lead = D.orig.find((o) => o.id === D.clip.id);
-      const ns = snapTime(lead.start + dt, S.sel, lead.dur);
-      const delta = ns - lead.start;
       let ti = clamp(Math.floor((py - TOP) / laneH), 0, P.tracks.length - 1), dTrack = ti - D.track0;
+      const ns = snapTime(lead.start + dt, S.sel, lead.dur, null, P.tracks[ti].id);
+      const delta = ns - lead.start;
       for (const o of D.orig) {
         const c = P.clips.find((k) => k.id === o.id);
         c.start = Math.max(0, o.start + delta);
@@ -854,7 +938,7 @@ function onMove(e) {
     }
     case 'trimL': {
       const o = D.orig.find((k) => k.id === D.clip.id), c = D.clip;
-      let ns = snapTime(o.start + dt, S.sel);
+      let ns = snapTime(o.start + dt, S.sel, null, null, c.track);
       ns = clamp(ns, o.start - o.offset, o.start + o.dur - 0.02);
       const d = ns - o.start; c.start = ns; c.offset = o.offset + d; c.dur = o.dur - d;
       c.fin = Math.min(c.fin, c.dur / 2); break;
@@ -862,8 +946,14 @@ function onMove(e) {
     case 'trimR': {
       const o = D.orig.find((k) => k.id === D.clip.id), c = D.clip, e2 = buffers.get(c.src);
       const maxD = e2 ? e2.buf.duration - o.offset : o.dur;
-      const ne = snapTime(o.start + o.dur + dt, S.sel);
+      const ne = snapTime(o.start + o.dur + dt, S.sel, null, null, c.track);
       c.dur = clamp(ne - o.start, 0.02, maxD); c.fout = Math.min(c.fout, c.dur / 2); break;
+    }
+    case 'stretch': {
+      const c = D.clip, ne = snapTime(c.start + D.dur0 + dt, S.sel, null, null, c.track);
+      c.dur = clamp(ne - c.start, D.dur0 / 2, D.dur0 * 2); c._pv = D.dur0 / c.dur;
+      Drag.stretchTxt = `${Math.round(c._pv * 1000) / 10}% · ${c.dur.toFixed(2)} с`;
+      break;
     }
     case 'fadeIn': { const c = D.clip; c.fin = clamp(xToT(px) - c.start, 0.002, c.dur - c.fout); break; }
     case 'fadeOut': { const c = D.clip; c.fout = clamp(c.start + c.dur - xToT(px), 0.002, c.dur - c.fin); break; }
@@ -876,6 +966,12 @@ function onUp(e) {
   if (Drag.pinch) { if (Drag.ptrs.size === 0) Drag.pinch = null; return; }
   const D = Drag.active; Drag.active = null; Drag.snapX = null;
   if (!D) return;
+  if (D.kind === 'stretch') {
+    const c = D.clip, tempo = c._pv; Drag.stretchTxt = null;
+    c.dur = D.dur0; delete c._pv;
+    if (D.moved && tempo && Math.abs(tempo - 1) > 0.002) stretchSel(tempo); else { renderBar(); redraw(); }
+    return;
+  }
   if (D.kind === 'ruler') {
     if (!D.moved) seekTo(D.t0);
     else { commit(); if (S.playing) restartPlayback(); }
@@ -1045,11 +1141,25 @@ async function stretchSel(tempo) {
     const base = c.name.replace(/ ⏩[\d.]+%$/, '');
     const { fileId, dur } = await addRenderedFile(out, `${base}_${pct}%.wav`);
     const oldEnd = c.start + c.dur;
+    if (!c.orig) c.orig = { src: c.src, offset: c.offset, dur: c.dur, name: c.name, fin: c.fin, fout: c.fout };
     Object.assign(c, { src: fileId, offset: 0, dur, tempo: total, name: `${base} ⏩${pct}%`, fin: Math.min(c.fin, dur / 2), fout: Math.min(c.fout, dur / 2) });
     if (S.ripple) { const d = c.start + dur - oldEnd; for (const o of P.clips) if (o !== c && o.track === c.track && o.start >= oldEnd - 1e-6) o.start += d; }
     S.sel = new Set([c.id]); S.inspector = 'clip';
     commit(); renderBar(); redraw(); toast(`Готово: ${pct}% · ${dur.toFixed(2)} с (${mode === 'speech' ? 'речь' : 'SoundTouch'})`, 3000);
   });
+}
+function unstretchSel() {
+  const cs = selClips().filter((c) => c.orig); if (!cs.length) return;
+  for (const c of cs) {
+    const oldEnd = c.start + c.dur;
+    Object.assign(c, c.orig); delete c.orig; delete c.tempo;
+    if (S.ripple) { const d = c.start + c.dur - oldEnd; for (const o of P.clips) if (o !== c && o.track === c.track && o.start >= oldEnd - 1e-6) o.start += d; }
+  }
+  commit(); renderBar(); redraw(); toast('Вернул исходную скорость');
+}
+function selectTrack() {
+  const cs = selClips(); if (!cs.length) return;
+  S.sel = new Set(P.clips.filter((c) => c.track === cs[0].track).map((c) => c.id)); renderBar(); redraw();
 }
 function selSpan() { const cs = selClips(); if (!cs.length) return 0; const tr = cs[0].track, l = cs.filter((c) => c.track === tr); return Math.max(...l.map((c) => c.start + c.dur)) - Math.min(...l.map((c) => c.start)); }
 function loopTo(s, e) { P.loop = { s, e, on: true }; commit(); updateToolbar(); redraw(); if (S.playing) restartPlayback(); }
@@ -1073,6 +1183,83 @@ async function renderRange(start, len, limGain) {
   const off = TOTAL_LAT;
   const L = out.getChannelData(0).slice(off, off + frames), R = out.getChannelData(1).slice(off, off + frames);
   return [L, R];
+}
+// Everything before the maximizer doesn't depend on its threshold: render that once, then re-run only the limiter
+async function renderPre(start, len) {
+  const frames = Math.ceil(len * SR) + TOTAL_LAT + LAT.lim + 64;
+  const ctx = new OfflineAudioContext(2, frames, SR);
+  const saved = P.master.lim.on; P.master.lim.on = false;
+  try {
+    const g = await buildGraph(ctx, false, {});
+    scheduleClips(g, start, start + len, 0);
+    return await ctx.startRendering();
+  } finally { P.master.lim.on = saved; }
+}
+async function renderLim(pre, len, limGain) {
+  const ctx = new OfflineAudioContext(2, pre.length, SR);
+  await ensureWorklet(ctx);
+  const src = ctx.createBufferSource(); src.buffer = pre;
+  const lim = new AudioWorkletNode(ctx, 'efir-limiter', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { p: PR.lim(P.master, { limGain }) } });
+  src.connect(lim); lim.connect(ctx.destination); src.start(0);
+  const out = await ctx.startRendering();
+  // pre already carries the limiter's latency once (bypassed limiter keeps its delay); this pass adds it again
+  const off = TOTAL_LAT + LAT.lim, frames = Math.ceil(len * SR);
+  return [out.getChannelData(0).slice(off, off + frames), out.getChannelData(1).slice(off, off + frames)];
+}
+// Stems: one render, every track (after its own FX, before the master chain) lands in its own channel pair
+async function renderStems(start, len, limGain) {
+  const stems = [...P.tracks.map((t) => ({ id: t.id, name: t.name })), { id: 'bus', name: 'Даблер и ревер' }];
+  const frames = Math.ceil(len * SR), off = VOICE_LAT + LAT.duck;
+  const ctx = new OfflineAudioContext(stems.length * 2, frames + off + 64, SR);
+  const g = await buildGraph(ctx, false, { limGain });
+  g.master.lim.disconnect();
+  const merger = ctx.createChannelMerger(stems.length * 2);
+  stems.forEach((st, k) => {
+    const node = st.id === 'bus' ? g.bus.post : g.tracks[st.id].out;
+    const sp = ctx.createChannelSplitter(2); node.connect(sp);
+    sp.connect(merger, 0, 2 * k); sp.connect(merger, 1, 2 * k + 1);
+  });
+  merger.connect(ctx.destination);
+  scheduleClips(g, start, start + len, 0);
+  const out = await ctx.startRendering();
+  return stems.map((st, k) => ({ ...st, ch: [out.getChannelData(2 * k).slice(off, off + frames), out.getChannelData(2 * k + 1).slice(off, off + frames)] }));
+}
+function encodeWavFloat(ch) {
+  const n = ch[0].length, nc = ch.length, data = n * nc * 4;
+  const buf = new ArrayBuffer(44 + data), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + data, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 3, true); v.setUint16(22, nc, true); v.setUint32(24, SR, true);
+  v.setUint32(28, SR * nc * 4, true); v.setUint16(32, nc * 4, true); v.setUint16(34, 32, true);
+  w(36, 'data'); v.setUint32(40, data, true);
+  let o = 44; for (let i = 0; i < n; i++) for (let c = 0; c < nc; c++) { v.setFloat32(o, ch[c][i], true); o += 4; }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+// Minimal ZIP writer (stored, UTF-8 names) — opens everywhere, no extra library
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+async function makeZip(entries, name) {
+  const enc = new TextEncoder(), parts = [], cen = [];
+  const d = new Date(), dt = ((d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)) & 0xFFFF, dd = (((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()) & 0xFFFF;
+  let off = 0;
+  for (const e of entries) {
+    const data = new Uint8Array(await e.blob.arrayBuffer()), nm = enc.encode(e.name), crc = crc32(data);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+    h.setUint16(10, dt, true); h.setUint16(12, dd, true); h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true);
+    h.setUint16(26, nm.length, true); h.setUint16(28, 0, true);
+    parts.push(h.buffer, nm, data);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true);
+    c.setUint16(12, dt, true); c.setUint16(14, dd, true); c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true);
+    c.setUint16(28, nm.length, true); c.setUint32(42, off, true);
+    cen.push(c.buffer, nm);
+    off += 30 + nm.length + data.length;
+  }
+  const cenSize = cen.reduce((a, b) => a + b.byteLength, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true); end.setUint32(12, cenSize, true); end.setUint32(16, off, true);
+  return new File([...parts, ...cen, end.buffer], name, { type: 'application/zip' });
 }
 function rmsDb(ch) { let s = 0, n = 0; for (const d of ch) { for (let i = 0; i < d.length; i++) s += d[i] * d[i]; n += d.length; } return n ? 10 * Math.log10(s / n + 1e-20) : -Infinity; }
 function samplePeak(ch) { let p = 0; for (const d of ch) for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > p) p = a; } return p; }
@@ -1139,7 +1326,9 @@ function finalize(raw) {
 }
 async function processRegion(r, onStep) {
   const M = P.master; let gain = -M.lim.thresh;
-  let ch = finalize(await renderRange(r.start, r.len, gain));
+  const pre = await renderPre(r.start, r.len);
+  const run = async (g) => (M.lim.on === false ? finalize(await renderRange(r.start, r.len, g)) : finalize(await renderLim(pre, r.len, g)));
+  let ch = await run(gain);
   if (M.autoRms) {
     let prev = null;
     for (let it = 0; it < 8; it++) {
@@ -1153,7 +1342,7 @@ async function processRegion(r, onStep) {
       if (Math.abs(ng - gain) < 0.01) break;
       gain = ng;
       onStep && onStep(`вход лимитера ${fmtDb(gain)} дБ`);
-      ch = finalize(await renderRange(r.start, r.len, gain));
+      ch = await run(gain);
     }
   }
   const stats = { len: r.len, rms: rmsDb(ch), rmsL: rmsDb([ch[0]]), rmsR: rmsDb([ch[1]]), peak: linToDb(samplePeak(ch)), tp: linToDb(truePeak(ch)), lufs: lufsI(ch), gain };
@@ -1259,6 +1448,8 @@ function updateToolbar() {
   $('#bSnap').classList.toggle('on', S.snap);
   $('#bRipple').classList.toggle('on', S.ripple);
   const lb = $('#bLoop'); if (lb) lb.classList.toggle('on', !!(P.loop && P.loop.on && P.loop.e > P.loop.s));
+  $('#bStretch').classList.toggle('on', S.tool === 'stretch'); $('#bMulti').classList.toggle('on', !!S.multi);
+  $('#tl').style.cursor = S.tool === 'stretch' ? 'ew-resize' : '';
   $('#bUndo').disabled = S.hidx <= 0; $('#bRedo').disabled = S.hidx >= S.hist.length - 1;
   $('#projName').textContent = P.name;
 }
@@ -1335,6 +1526,7 @@ function renderBar() {
     el('span', {}, 'тап — курсор, S — разрезать'),
     el('span', {}, 'наложи клипы — будет кроссфейд'),
     el('span', {}, 'проведи по линейке — луп'),
+    el('span', {}, '⧉ Выбор — несколько клипов, ⏱ — растянуть мышкой'),
     el('span', {}, 'имя дорожки или FX — обработка')));
 }
 function numField(id, value, step, min, onSet, w = '4.6em') {
@@ -1362,7 +1554,8 @@ function barClip(box, cs) {
       el('button', { class: 'btn', onclick: () => nudge(0.01) }, '10мс→'),
       el('button', { class: 'btn', onclick: duplicateSel }, 'Дубль'),
       el('button', { class: 'btn', onclick: normalizeSel }, 'Пик −1'),
-      el('button', { class: 'btn', onclick: glueSel, title: 'Склеить выделенные клипы в один файл' }, 'Склеить'),
+      el('button', { class: 'btn', onclick: selectTrack, title: 'Выделить все клипы на этой дорожке' }, 'Все на дорожке'),
+      el('button', { class: 'btn' + (cs.length > 1 ? ' primary' : ''), onclick: glueSel, title: 'Склеить выделенные клипы в один файл' }, cs.length > 1 ? `Склеить (${cs.length})` : 'Склеить'),
       el('button', { class: 'btn', onclick: () => loopTo(Math.min(...cs.map((k) => k.start)), Math.max(...cs.map((k) => k.start + k.dur))) }, 'Луп'),
       el('button', { class: 'btn danger', onclick: deleteSel }, S.ripple ? 'Удалить со сдвигом' : 'Удалить')));
   if (c.track === 'mu') box.append(raoInline(c.src));
@@ -1377,6 +1570,7 @@ function speedBar(cs) {
   return el('div', { class: 'cgrp speed' },
     el('b', {}, 'Ускорить'),
     ...[103, 105, 108, 110, 115, 120].map((p) => el('button', { class: 'btn sp', onclick: () => stretchSel(p / 100) }, '+' + (p - 100) + '%')),
+    cs.some((c) => c.orig) ? el('button', { class: 'btn danger', onclick: unstretchSel }, 'Отменить ускорение') : null,
     el('button', { class: 'btn sp', onclick: () => stretchSel(0.95), title: 'Замедлить на 5%' }, '−5%'),
     el('label', { class: 'cgrp' }, pct, '%'),
     el('label', { class: 'cgrp' }, 'под', len, 'с'),
@@ -1406,7 +1600,7 @@ function barRegion(box, r) {
       el('button', { class: 'btn primary', onclick: () => { P.playhead = r.start; play(r.start, r.start + r.len); } }, 'Слушать'),
       el('button', { class: 'btn', onclick: () => zoomRegion(r) }, 'Показать'),
       el('button', { class: 'btn', onclick: () => loopTo(r.start, r.start + r.len) }, 'Луп'),
-      el('button', { class: 'btn', onclick: () => duplicateRegion(r) }, 'Вариант-копия'),
+      el('button', { class: 'btn primary', onclick: () => duplicateRegion(r), title: 'Копия региона вместе с голосом и музыкой — например, чтобы поменять музыку' }, 'Дублировать регион'),
       el('button', { class: 'btn', onclick: addVariantSet }, '+ набор 30/15/10/5'),
       el('button', { class: 'btn danger', onclick: deleteRegion }, 'Удалить')));
   refreshBar();
@@ -1492,9 +1686,12 @@ async function openExport() {
   const fmtSel = el('div', { class: 'seg' },
     ...[['wav', `WAV 48 кГц / ${P.master.lim.quantize === 16 ? 16 : 24} бит`], ['mp3', 'MP3 320']].map(([v, t]) => el('label', {}, el('input', { type: 'radio', name: 'fmt', value: v, checked: M.format === v }), el('span', {}, t))));
   const res = el('div', { class: 'results' });
+  const stemsChk = el('input', { type: 'checkbox', id: 'expStems', checked: !!M.stems });
+  stemsChk.addEventListener('change', () => { M.stems = stemsChk.checked; scheduleSave(); });
   const body = el('div', {},
     el('h4', {}, 'Регионы'), el('div', { class: 'checks' }, ...checks),
     el('h4', {}, 'Формат'), fmtSel,
+    el('label', { class: 'tog' }, stemsChk, el('span', {}, 'Ещё и стемы в ZIP — каждая дорожка отдельно (с её обработкой, без мастера) + микс')),
     el('p', { class: 'note' }, M.autoRms ? `RMS подгоняется к ${M.targetRms.toFixed(1)} дБ, потолок ${M.lim.ceiling.toFixed(1)} dBTP` : `Авто RMS выключен, порог лимитера ${fmtDb(M.lim.thresh)} дБ, потолок ${M.lim.ceiling.toFixed(1)} dBTP`, M.fades ? ', фейды 50 мс.' : '.'),
     res);
   const go = async (encode) => {
@@ -1509,7 +1706,7 @@ async function openExport() {
     const table = el('table', { class: 'stats' }, el('thead', {}, el('tr', {}, ...['Регион', 'RMS', 'L / R', 'Peak', 'True peak', 'LUFS-I', 'Порог лим.'].map((h) => el('th', {}, h)))));
     const tb = el('tbody'); table.append(tb);
     res.append(el('div', { class: 'tablewrap' }, table));
-    const files = [];
+    const files = [], zipEntries = [], wantStems = encode && stemsChk.checked;
     for (const r of regs) {
       const row = el('tr', {}, el('td', {}, r.name), el('td', { colspan: 6, class: 'dim' }, 'Рендер…')); tb.append(row);
       try {
@@ -1523,28 +1720,81 @@ async function openExport() {
           const blob = fmt === 'mp3' ? await encodeMp3(ch) : encodeWavQ(ch, P.master.lim);
           const name = `${sanitize(P.name)}_${sanitize(r.name)}.${fmt}`;
           files.push(new File([blob], name, { type: blob.type }));
+          if (wantStems) {
+            row.lastChild.textContent = 'стемы…';
+            const dir = `${sanitize(P.name)}_${sanitize(r.name)}/`;
+            zipEntries.push({ name: dir + `00_Микс.${fmt}`, blob });
+            const stems = await renderStems(r.start, r.len, stats.gain);
+            let k = 1;
+            for (const st of stems) {
+              const pk = samplePeak(st.ch); if (pk < 1e-5) continue;
+              if (M.fades) { const nf = Math.round(0.05 * SR); for (const d of st.ch) { const n = d.length; for (let i = 0; i < nf && i < n / 2; i++) { const g = i / nf; d[i] *= g; d[n - 1 - i] *= g; } } }
+              // pre-master stems can go over 0 dBFS: then they are written as 32-bit float so nothing clips
+              const sb = pk > 0.999 ? encodeWavFloat(st.ch) : encodeWav24(st.ch);
+              zipEntries.push({ name: dir + `${String(k++).padStart(2, '0')}_${sanitize(st.name)}.wav`, blob: sb });
+            }
+          }
         }
       } catch (e) { console.error(e); row.lastChild.textContent = 'Ошибка: ' + e.message; row.lastChild.className = 'bad'; }
       await new Promise((ok) => setTimeout(ok, 0));
     }
     bRun.disabled = bAn.disabled = false;
-    if (encode && files.length) res.append(filesPanel(files));
+    if (zipEntries.length) { toast('Упаковываю ZIP…', 3000); files.unshift(await makeZip(zipEntries, `${sanitize(P.name)}_стемы.zip`)); }
+    if (encode && files.length) { const fp = filesPanel(files, 'Готово — послушай и отправь'); res.prepend(fp); fp.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   };
   const bAn = el('button', { class: 'btn', onclick: () => go(false) }, 'Только статистика');
   const bRun = el('button', { class: 'btn primary', onclick: () => go(true) }, 'Рендер');
   modal('Экспорт регионов', body, [bAn, bRun]);
 }
+// Result list: each file with its waveform, a play button and ways to save/send it
 function filesPanel(files, title = 'Файлы готовы') {
   const urls = files.map((f) => URL.createObjectURL(f));
   const canShare = !!(navigator.canShare && navigator.canShare({ files }));
-  return el('div', { class: 'files' },
+  const share = async (fs) => {
+    try { await navigator.share({ files: fs, title: fs.length === 1 ? fs[0].name : P.name }); }
+    catch (e) { if (e.name !== 'AbortError') toast('Не получилось открыть «Поделиться»: ' + e.message, 4000); }
+  };
+  let current = null;
+  const rows = files.map((f, i) => {
+    const isAudio = /^audio\//.test(f.type) || /\.(wav|mp3)$/i.test(f.name);
+    const wave = isAudio ? el('canvas', { class: 'rwave' }) : null;
+    const audio = isAudio ? el('audio', { src: urls[i], preload: 'metadata' }) : null;
+    const playBtn = isAudio ? el('button', { class: 'btn rplay', 'aria-label': 'Слушать', onclick: () => {
+      if (current && current !== audio) { current.pause(); current.currentTime = 0; }
+      if (audio.paused) { audio.play(); current = audio; } else audio.pause();
+    } }, '▶') : null;
+    if (audio) {
+      audio.addEventListener('play', () => { playBtn.textContent = '❚❚'; });
+      audio.addEventListener('pause', () => { playBtn.textContent = '▶'; });
+      audio.addEventListener('timeupdate', () => { if (wave) wave.parentElement.style.setProperty('--p', (audio.currentTime / (audio.duration || 1) * 100) + '%'); });
+    }
+    const info = el('small', { class: 'dim' }, (/\.zip$/i.test(f.name) ? 'архив стемов · ' : '') + (f.size / 1048576).toFixed(2) + ' МБ');
+    if (wave) (async () => {
+      try {
+        const buf = await new OfflineAudioContext(1, 1, 48000).decodeAudioData(await f.arrayBuffer());
+        info.textContent = `${buf.duration.toFixed(2)} с · ${(f.size / 1048576).toFixed(2)} МБ`;
+        requestAnimationFrame(() => {
+          const [x, w, h] = canvas2d(wave), d0 = buf.getChannelData(0), d1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : d0, step = d0.length / w;
+          x.fillStyle = '#17191A'; x.fillRect(0, 0, w, h); x.fillStyle = '#62D6B9';
+          for (let px = 0; px < w; px++) { let mx = 0; for (let j = Math.floor(px * step); j < Math.floor((px + 1) * step); j++) { const v = Math.max(Math.abs(d0[j]), Math.abs(d1[j])); if (v > mx) mx = v; } const hh = mx * (h / 2 - 2); x.fillRect(px, h / 2 - hh, 1, Math.max(1, hh * 2)); }
+          x.fillStyle = 'rgba(255,255,255,.12)'; x.fillRect(0, h / 2, w, 1);
+        });
+      } catch {}
+    })();
+    return el('div', { class: 'rrow' },
+      el('div', { class: 'rhead' }, playBtn, el('span', { class: 'mono rname' }, f.name), info),
+      wave ? el('div', { class: 'rwavewrap' }, wave) : null, audio,
+      el('div', { class: 'btns' },
+        canShare ? el('button', { class: 'btn', onclick: () => share([f]) }, 'Отправить / в Файлы') : null,
+        el('a', { class: 'btn', href: urls[i], download: f.name }, 'Скачать')));
+  });
+  return el('div', { class: 'files results' },
     el('h4', {}, title),
-    ...files.map((f, i) => el('div', { class: 'frow' },
-      el('span', { class: 'mono' }, f.name), el('small', { class: 'dim' }, (f.size / 1048576).toFixed(2) + ' МБ'),
-      el('a', { class: 'btn small', href: urls[i], download: f.name }, 'Скачать'))),
-    el('div', { class: 'btns' },
-      canShare ? el('button', { class: 'btn primary', onclick: async () => { try { await navigator.share({ files, title: files.length === 1 ? files[0].name : P.name }); } catch (e) { if (e.name !== 'AbortError') toast('Не получилось открыть «Поделиться»: ' + e.message); } } }, 'Поделиться (Облако, Telegram, почта)') : el('p', { class: 'note' }, 'Этот браузер не умеет делиться файлами. Скачай их кнопками выше.'),
-      el('button', { class: 'btn', onclick: () => copyText(files.map((f) => f.name).join('\n'), 'Имена файлов скопированы') }, 'Копировать имена файлов')));
+    canShare ? el('div', { class: 'btns' },
+      el('button', { class: 'btn primary big', onclick: () => share(files) }, files.length > 1 ? `Отправить все (${files.length}) — Облако, Telegram, почта, Файлы` : 'Отправить — Облако, Telegram, почта, Файлы')) : null,
+    el('p', { class: 'note' }, canShare ? 'Чтобы положить в «Загрузки»: «Отправить» → «Сохранить в Файлы» → папка «Загрузки».' : 'Нажми «Скачать» — файл появится в папке «Загрузки».'),
+    ...rows,
+    el('div', { class: 'btns' }, el('button', { class: 'btn', onclick: () => copyText(files.map((f) => f.name).join('\n'), 'Имена файлов скопированы') }, 'Копировать имена файлов')));
 }
 
 function openRao() {
@@ -1646,6 +1896,8 @@ function bindUI() {
   $('#bRipple').onclick = () => { S.ripple = !S.ripple; ls.set('ripple', S.ripple); updateToolbar(); renderBar(); };
   $('#bZin').onclick = () => zoom(1.5); $('#bZout').onclick = () => zoom(1 / 1.5); $('#bFit').onclick = zoomFit;
   $('#bExport').onclick = openExport; $('#bRao').onclick = openRao; $('#projName').onclick = openProjects;
+  $('#bStretch').onclick = () => { S.tool = S.tool === 'stretch' ? 'edit' : 'stretch'; updateToolbar(); toast(S.tool === 'stretch' ? 'Растяжение: тяни клип за край — длина меняется вместе со скоростью' : 'Обычный монтаж', 2600); };
+  $('#bMulti').onclick = () => { S.multi = !S.multi; updateToolbar(); toast(S.multi ? 'Мультивыбор: тапай клипы по очереди, потом «Склеить»' : 'Мультивыбор выключен', 2600); };
   $('#bPresets').onclick = openPresets; $('#bConvert').onclick = openConverter; $('#bLoop').onclick = toggleLoop;
   $('#bMaster').onclick = () => openFx('master');
   $('#mtitle').onclick = () => openFx('master');
@@ -1688,7 +1940,7 @@ const Presets = {
   getDefault() { const id = ls.get('presetDefault', null); return id ? this.all().find((p) => p.id === id) || null : null; },
   setDefault(id) { ls.set('presetDefault', id); },
 };
-const PRESET_TRACK_KEYS = ['vol', 'pan', 'declick', 'eq', 'vox', 'la2a', 'deess', 'drive', 'duck'];
+const PRESET_TRACK_KEYS = ['vol', 'pan', 'declick', 'eq', 'vox', 'la2a', 'deess', 'drive', 'duck', 'sends'];
 function capturePreset(name) {
   const tracks = {};
   for (const t of P.tracks) { tracks[t.id] = {}; for (const k of PRESET_TRACK_KEYS) if (t[k] !== undefined) tracks[t.id][k] = JSON.parse(JSON.stringify(t[k])); }
@@ -1699,7 +1951,9 @@ function applyPresetTo(p, pr) {
   for (const t of p.tracks) { const src = pr.tracks && pr.tracks[t.id]; if (src) for (const k of PRESET_TRACK_KEYS) if (src[k] !== undefined) t[k] = JSON.parse(JSON.stringify(src[k])); }
   if (pr.master) Object.assign(p.master, JSON.parse(JSON.stringify(pr.master)));
   upgradeLim(p.master);
-  for (const t of p.tracks) if (t.kind === 'voice' && !t.la2a) t.la2a = DEF.la2a();
+  for (const t of p.tracks) if (t.kind === 'voice') { if (!t.la2a) t.la2a = DEF.la2a(); if (!t.sends) t.sends = DEF.sends(); }
+  if (!p.master.bus) p.master.bus = DEF.bus();
+  if (!p.master.tonal) p.master.tonal = DEF.tonal();
   return p;
 }
 function openPresets() {

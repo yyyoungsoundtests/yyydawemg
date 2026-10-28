@@ -90,6 +90,14 @@ button { cursor: pointer; }
 .mfxrow { display: flex; align-items: center; gap: 5px; padding: 0 6px; border-bottom: 1px solid #2A2C2D; }
 .mfxrow button { flex: 1; text-align: left; border: 0; background: none; padding: 6px 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mfxrow.off button { color: var(--dim); text-decoration: line-through; }
+.results .rrow { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line2); border-radius: 6px; background: #26282A; }
+.rhead { display: flex; align-items: center; gap: 10px; }
+.rname { flex: 1; min-width: 0; font-size: 12.5px; word-break: break-all; }
+.rplay { width: 40px; justify-content: center; }
+.rwavewrap { position: relative; }
+.rwave { width: 100%; height: 56px; display: block; border-radius: 4px; --p: 0%; }
+.rwavewrap::after { content: ""; position: absolute; top: 0; bottom: 0; left: var(--p, 0%); width: 2px; background: #fff; opacity: .85; pointer-events: none; }
+.btn.big { padding: 10px 14px; font-size: 14px; }
 .mbyp { margin: 6px; padding: 6px 8px; border-radius: 3px; border: 1px solid var(--line); background: var(--btn); font-size: 11.5px; font-weight: 600; color: #D9DCDC; }
 .mbyp.on { background: #8A3A32; border-color: #B5554A; color: #fff; }
 #bLoop.on { background: #6B5A1E; border-color: #D9B53C; color: #FFE7A0; }
@@ -419,6 +427,36 @@ button { cursor: pointer; }
 .l3exp { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 12px; }
 @media (max-width: 760px) { .l3main { grid-template-columns: 1fr; } .l3left { min-width: 0; } .l3disp { height: 220px; } .row2a { grid-template-columns: 1fr; justify-items: center; } }
 
+/* Auto Balance */
+.pl-tb { background: linear-gradient(#0F1B2C, #0A121D); }
+.tblogo { font-weight: 300 !important; font-size: 20px !important; color: #EAF2FF; letter-spacing: .04em; }
+.tbc { width: 100%; height: 240px; border-radius: 6px; border: 1px solid #1C2B40; display: block; }
+.tbsl { display: flex; flex-direction: column; gap: 6px; background: rgba(255,255,255,.03); border: 1px solid #1C2B40; border-radius: 6px; padding: 12px; }
+.tbrow { display: grid; grid-template-columns: minmax(150px, 220px) 1fr 4.5em; gap: 12px; align-items: center; }
+.tbl { display: flex; flex-direction: column; font-weight: 600; color: #DDE7F5; }
+.tbl small { font-weight: 400; color: #7F93AE; font-size: 11px; }
+.tbr { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; background: transparent; }
+.tbr::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(90deg, #1E3554, #3B6FA8); }
+.tbr::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -7px; border-radius: 50%; background: #F2C94C; border: 2px solid #0A121D; }
+.tbr::-moz-range-track { height: 6px; border-radius: 3px; background: #2B4F7C; }
+.tbr::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #F2C94C; border: 2px solid #0A121D; }
+.tbrow b { text-align: right; color: #F2C94C; }
+.mblink { border: 1px solid #2E3B4C; border-radius: 14px; background: none; padding: 3px 12px; font-size: 12px; color: #8FA3BA; }
+.mblink.on { border-color: #30B6EE; color: #30B6EE; background: rgba(48,182,238,.1); }
+@media (max-width: 760px) { .tbrow { grid-template-columns: 1fr 4em; } .tbrow input { grid-column: 1 / -1; grid-row: 2; } }
+
+/* Sends */
+.pl-snd { background: linear-gradient(#142224, #0C1516); }
+.sndrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.sndcard { background: #132B2D; border: 1px solid #23474A; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.sndcard.send { background: #17363A; border-color: #2E6B6F; }
+.sndcard h5 { margin: 0; font-size: 13px; letter-spacing: .06em; color: #CFF3EC; display: flex; gap: 10px; align-items: baseline; }
+.sndcard h5 small { font-weight: 400; color: #77A9A4; font-size: 11px; letter-spacing: 0; }
+.sndknobs { display: flex; flex-wrap: wrap; gap: 14px; justify-content: space-around; align-items: flex-end; }
+.sndir { width: 100%; height: 70px; border-radius: 4px; border: 1px solid #23474A; display: block; }
+.k-snd .kg0 { stop-color: #3F5F62; } .k-snd .kg1 { stop-color: #0E1D1F; } .k-snd .karc { stroke: #5ED6BE; } .k-snd .ktrack { stroke: rgba(94,214,190,.15); }
+.k-snd.big .karc { stroke: #FFD65A; }
+
 /* Stats */
 .pl-st { background: #1A1C1D; }
 .stgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
@@ -470,6 +508,8 @@ button { cursor: pointer; }
     <button class="tb" id="bDel" title="Удалить (Delete)">Удалить</button>
     <button class="tb" id="bRipple" title="Удаление со сдвигом следующих клипов">Ripple</button>
     <button class="tb" id="bSnap" title="Прилипание к краям клипов, регионов и курсору">Snap</button>
+    <button class="tb" id="bMulti" title="Мультивыбор: тап добавляет клип к выделению">⧉ Выбор</button>
+    <button class="tb" id="bStretch" title="Растяжение: тяни клип за край — меняется скорость"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v4l3 2M9 2h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Растянуть</button>
     <span class="sep"></span>
     <button class="tb" id="bZout" aria-label="Отдалить">−</button>
     <button class="tb" id="bFit" title="Показать всё">Всё</button>
@@ -510,8 +550,8 @@ button { cursor: pointer; }
   </footer>
 </div>
 <div id="toast" hidden></div>
-<script src="stretch.js?v=0.4.0"></script>
-<script src="fx.js?v=0.4.0"></script>
-<script src="app.js?v=0.4.0"></script>
+<script src="stretch.js?v=0.6.0"></script>
+<script src="fx.js?v=0.6.0"></script>
+<script src="app.js?v=0.6.0"></script>
 </body>
 </html>
