@@ -2289,6 +2289,21 @@ async function boot() {
   try { const last = ls.get('last'); if (last) p = await Store.get('projects', last); } catch {}
   await loadProject(p || newProject());
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  // a home-screen app on iPad can stay open for days: when it comes back, check whether a newer version is online
+  let lastCheck = 0;
+  const checkUpdate = async () => {
+    if (Date.now() - lastCheck < 20000 || !navigator.onLine) return; lastCheck = Date.now();
+    try {
+      const t = await (await fetch('app.js?nc=' + Date.now(), { cache: 'no-store' })).text();
+      const v = (/APP_VERSION = '([^']+)'/.exec(t) || [])[1];
+      if (v && v !== APP_VERSION && !S.playing) {
+        modal('Есть обновление', el('p', {}, `Новая версия ${v} (сейчас ${APP_VERSION}). Проект сохранён — обновить можно прямо сейчас.`),
+          [el('button', { class: 'btn', onclick: closeModal }, 'Позже'), el('button', { class: 'btn primary', onclick: async () => { try { clearTimeout(S.saveTimer); P.updated = Date.now(); await Store.put('projects', P.id, JSON.parse(JSON.stringify(P))); } catch {} try { const regs = await navigator.serviceWorker?.getRegistrations(); for (const r of regs || []) await r.update(); const ks = await caches.keys(); for (const k of ks) await caches.delete(k); } catch {} location.reload(); } }, 'Обновить')]);
+      }
+    } catch {}
+  };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
+  setTimeout(checkUpdate, 4000);
 }
 window.addEventListener('DOMContentLoaded', boot);
 
