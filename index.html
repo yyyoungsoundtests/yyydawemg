@@ -90,6 +90,11 @@ button { cursor: pointer; }
 .mfxrow { display: flex; align-items: center; gap: 5px; padding: 0 6px; border-bottom: 1px solid #2A2C2D; }
 .mfxrow button { flex: 1; text-align: left; border: 0; background: none; padding: 6px 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mfxrow.off button { color: var(--dim); text-decoration: line-through; }
+.mbyp { margin: 6px; padding: 6px 8px; border-radius: 3px; border: 1px solid var(--line); background: var(--btn); font-size: 11.5px; font-weight: 600; color: #D9DCDC; }
+.mbyp.on { background: #8A3A32; border-color: #B5554A; color: #fff; }
+#bLoop.on { background: #6B5A1E; border-color: #D9B53C; color: #FFE7A0; }
+.speed .btn.sp { padding: 5px 8px; min-width: 44px; justify-content: center; font-family: var(--f-mono); font-size: 12px; }
+.seg2.small button { padding: 5px 9px; font-size: 11px; }
 .mfxrow input, .fxrow input { accent-color: var(--fxon); width: 15px; height: 15px; flex: none; }
 .dotfx { width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .dotfx::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--fxon); }
@@ -342,23 +347,77 @@ button { cursor: pointer; }
 .shtog span { position: absolute; top: 6px; right: 7px; }
 .shtog.on span { right: auto; left: 8px; }
 
-/* Maximizer */
-.pl-l3 { background: linear-gradient(#56626E, #3B444D); }
-.l3head { display: flex; align-items: baseline; gap: 14px; padding: 6px 10px; background: linear-gradient(#2A3139, #20262C); border-radius: 4px; }
-.l3head b { font: 800 18px var(--f-ui); letter-spacing: .2em; color: #F0F4F7; }
-.l3head span { font-size: 11px; color: #A9B6C2; letter-spacing: .08em; }
-.l3body { display: flex; gap: 18px; align-items: flex-end; flex-wrap: wrap; background: linear-gradient(#4A545E, #39424B); border: 1px solid #262D34; border-radius: 6px; padding: 16px; }
-.l3pair { display: flex; align-items: flex-end; gap: 8px; }
-.l3m { width: 14px; height: 220px; border: 1px solid #12161A; border-radius: 2px; margin-bottom: 26px; }
-.l3m.at { width: 22px; margin-bottom: 0; }
-.l3 .vtrack { width: 36px; background: #1E2328; }
-.l3 .vthumb { background: linear-gradient(#FFFFFF, #AFC3D4); }
-.l3side { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; flex: 1; min-width: 240px; }
-.l3box { display: flex; flex-direction: column; gap: 6px; background: rgba(0,0,0,.18); border: 1px solid #2B333B; border-radius: 5px; padding: 8px 10px; }
-.l3box small { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: #C2CDD7; }
-.l3box.ro span { display: flex; justify-content: space-between; font-size: 12px; color: #C2CDD7; }
-.l3btn { align-self: flex-start; border: 1px solid #1B2025; background: #2F363D; border-radius: 3px; padding: 4px 10px; font-weight: 700; font-size: 11px; color: #9AA8B4; }
-.l3btn.on { background: #E7B53C; color: #2A2208; }
+/* Opto leveler (cream & silver faceplate) */
+.pl-2a { background: #2A2B2C; }
+.face2a { background: linear-gradient(#D8D8D2, #B9BAB3); border: 1px solid #77786F; border-radius: 6px; padding: 14px 18px 20px; box-shadow: inset 0 1px 0 #F2F2EC, 0 4px 14px rgba(0,0,0,.5); color: #1F2020; }
+.brand2a { display: flex; align-items: baseline; justify-content: center; gap: 14px; margin-bottom: 10px; }
+.brand2a span { font: 700 13px var(--f-ui); letter-spacing: .32em; }
+.brand2a small { font-size: 10px; letter-spacing: .2em; color: #55564F; }
+.row2a { display: grid; grid-template-columns: auto minmax(220px, 1fr) auto; gap: 18px; align-items: center; }
+.mid2a { display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.vu.va { width: 100%; max-width: 300px; }
+.sws2a { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; align-items: flex-end; }
+.sws2a > div { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.sws2a small { font: 600 9.5px var(--f-ui); letter-spacing: .16em; color: #3A3B37; }
+.sw2a { display: inline-flex; border: 1px solid #55564F; border-radius: 4px; overflow: hidden; background: #9C9D96; }
+.sw2a button { border: 0; background: none; padding: 5px 9px; font: 700 10px var(--f-ui); letter-spacing: .06em; color: #2D2E2B; }
+.sw2a button.on { background: #262725; color: #F2F0E4; }
+.pw2a { flex-direction: row !important; gap: 6px !important; }
+.lamp2a { width: 16px; height: 16px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #6A2A22, #2A0E0B); border: 1px solid #222; }
+.lamp2a.on { background: radial-gradient(circle at 40% 35%, #FFD9C9, #F2493A 45%, #8C1810); box-shadow: 0 0 12px #F2493A; }
+.k-2a .kg0 { stop-color: #3B3C3E; } .k-2a .kg1 { stop-color: #08090A; }
+.k-2a .kbody { stroke: #000; stroke-width: 3; }
+.k-2a .ktrack, .k-2a .karc { display: none; }
+.k-2a .kptr line { stroke: #F4F2E8; stroke-width: 3.6; }
+.k-2a .lab text { fill: #1F2020; font-size: 7.5px; font-weight: 700; }
+.k-2a .kval { color: #1F2020; font-weight: 600; }
+.k-2a .klab { color: #1F2020; font-weight: 700; letter-spacing: .14em; }
+
+/* Multimaximizer (dark slate left panel, metal-framed band display) */
+.pl-l3 { background: #141414; gap: 10px; }
+.l3main { display: grid; grid-template-columns: 318px minmax(0, 1fr); gap: 0; border: 1px solid #000; border-radius: 4px; overflow: hidden; }
+.l3left { background: linear-gradient(#262626, #1C1C1C); padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.l3cols { display: flex; gap: 6px; justify-content: space-between; }
+.l3col { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.l3cap { font: 400 12.5px var(--f-ui); color: #BDBDBD; letter-spacing: .03em; }
+.l3track { position: relative; width: 54px; touch-action: none; cursor: ns-resize; display: flex; justify-content: center; gap: 22px; }
+.l3mtr { width: 8px; height: 100%; background: #050505; border: 1px solid #333; display: block; }
+.l3rail { position: absolute; left: 50%; top: 0; bottom: 0; width: 6px; margin-left: -3px; background: #0B0B0B; border: 1px solid #3A3A3A; border-radius: 2px; }
+.l3track:not(:has(canvas)) .l3rail { width: 8px; margin-left: -4px; }
+.l3badge { position: absolute; left: 50%; transform: translateX(-50%); min-width: 52px; height: 24px; padding: 0 6px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #E6E6E6; background: linear-gradient(#5A5A5A, #2C2C2C); border: 1.5px solid #D8C55A; border-radius: 3px; box-shadow: 0 2px 6px rgba(0,0,0,.7); }
+.l3atwrap { position: relative; width: 50px; display: flex; justify-content: flex-end; }
+.l3at { width: 12px; height: 100%; background: #050505; border: 1px solid #333; display: block; }
+.l3scale { position: absolute; left: 0; top: 0; bottom: 0; width: 34px; }
+.l3scale span { position: absolute; right: 0; transform: translateY(-50%); font: 11px var(--f-mono); color: #BDBDBD; white-space: nowrap; }
+.l3ros { display: flex; gap: 6px; }
+.l3ro { flex: 1; text-align: center; background: #0B0B0B; border: 1px solid #3A3A3A; padding: 4px 0; font-size: 12.5px; color: #DADADA; border-radius: 2px; }
+.l3box2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; background: #1A1A1A; border: 1px solid #333; border-radius: 6px; padding: 8px; text-align: center; }
+.l3box2.v { grid-template-columns: 1fr; }
+.l3sel { width: 100%; background: linear-gradient(#2E2E2E, #161616); color: #EAEAEA; border: 1px solid #3F3F3F; border-radius: 3px; padding: 5px 6px; font-size: 13px; text-align: center; }
+.l3bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: stretch; }
+.l3logo { display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: 10px; background: #1A1A1A; border: 1px solid #333; border-radius: 6px; padding: 10px; }
+.l3idr { width: 100%; padding: 10px 0; border-radius: 22px; border: 2px solid #3A1010; background: radial-gradient(#3A0E0E, #160606); font: 700 22px var(--f-ui); letter-spacing: .12em; color: #6C2420; }
+.l3idr.on { color: #F0402F; text-shadow: 0 0 10px rgba(240,64,47,.6); }
+.l3brand { display: flex; flex-direction: column; align-items: center; line-height: 1; }
+.l3brand b { font: 800 30px var(--f-ui); letter-spacing: .02em; background: linear-gradient(#F3B35C, #B9621E); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.l3brand small { font: 700 9.5px var(--f-ui); letter-spacing: .12em; color: #D7D7D7; margin-top: 4px; }
+.l3right { background: linear-gradient(#7C7A74, #5D5B56); padding: 12px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.l3bezel { border-radius: 26px; padding: 12px; background: linear-gradient(#B9B7B0, #6E6C66); box-shadow: inset 0 2px 4px rgba(255,255,255,.4), 0 3px 8px rgba(0,0,0,.6); }
+.l3disp { width: 100%; height: 300px; border-radius: 16px; display: block; touch-action: none; border: 2px solid #1A1A1A; }
+.l3bands { display: grid; grid-template-columns: auto repeat(6, minmax(52px, 1fr)); gap: 6px; align-items: start; background: linear-gradient(#6E6C67, #57554F); border-radius: 18px 18px 6px 6px; padding: 12px 10px; overflow-x: auto; }
+.l3lab { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.l3lab span { height: 28px; display: flex; align-items: center; font-size: 12.5px; color: #E2E0DA; }
+.l3band { display: flex; flex-direction: column; gap: 6px; align-items: stretch; border-top: 3px solid var(--bc); padding-top: 3px; }
+.l3num { background: linear-gradient(#5E5E5E, #3A3A3A); border: 1px solid #222; border-radius: 3px; height: 28px; display: flex; align-items: center; justify-content: center; box-shadow: inset 3px 0 0 var(--acc, transparent); }
+.l3num .dnum { color: #F0F0F0; font-size: 12px; padding: 1px; }
+.l3shape { display: flex; border: 1px solid #222; border-radius: 3px; overflow: hidden; background: #2A2A2A; }
+.l3shape button { flex: 1; border: 0; background: none; color: #8A8A8A; padding: 3px 0; }
+.l3shape button svg { width: 100%; height: 14px; display: block; }
+.l3shape button.on { background: #111; color: #F2F2F2; }
+.l3led { align-self: center; width: 44px; height: 14px; border-radius: 3px; border: 1px solid #1B1B1B; background: linear-gradient(#5A5A5A, #2C2C2C); }
+.l3led.on { background: linear-gradient(#9AA0A6, #5A5F64); box-shadow: inset 0 0 0 1px #C9CED2; }
+.l3exp { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 12px; }
+@media (max-width: 760px) { .l3main { grid-template-columns: 1fr; } .l3left { min-width: 0; } .l3disp { height: 220px; } .row2a { grid-template-columns: 1fr; justify-items: center; } }
 
 /* Stats */
 .pl-st { background: #1A1C1D; }
@@ -436,6 +495,7 @@ button { cursor: pointer; }
     <div class="tgrp">
       <button class="tb" id="bHome" aria-label="В начало"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM9.5 12 19 5v14z" fill="currentColor"/></svg></button>
       <button class="tb" id="bPlay" aria-label="Играть"></button>
+      <button class="tb" id="bLoop" aria-label="Луп" title="Луп (R): проведи по линейке, чтобы задать участок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a6 6 0 0 1 6-6h8m0 0-3-3m3 3-3 3M20 12a6 6 0 0 1-6 6H6m0 0 3 3m-3-3 3-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
     <div class="tclock"><span id="time">0:00.000</span><span id="tstate">Остановлено</span></div>
     <div class="tmeter" title="Выход мастера">
@@ -450,7 +510,8 @@ button { cursor: pointer; }
   </footer>
 </div>
 <div id="toast" hidden></div>
-<script src="fx.js?v=0.3.0"></script>
-<script src="app.js?v=0.3.0"></script>
+<script src="stretch.js?v=0.4.0"></script>
+<script src="fx.js?v=0.4.0"></script>
+<script src="app.js?v=0.4.0"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -85,9 +85,26 @@ const DEF = {
   mbBand: () => ({ on: true, lThr: 0, lRatio: 10, lAtt: 20, lRel: 100, cThr: -22.8, cRatio: 2, cAtt: 20, cRel: 60, gain: 0, mix: 100 }),
   mb: () => ({ on: true, xo: [100, 580, 4500], bands: [0, 1, 2, 3].map(() => DEF.mbBand()) }),
   sh: () => ({ on: true, oOn: true, oThr: 9, oGain: 7, dOn: true, dThr: 9, dRatio: 2, dAtt: 5, dRec: 0, dGain: 7, xf: 0, mix: 100 }),
-  lim: () => ({ thresh: -4, ceiling: -1, release: 80, arc: true }),
+  la2a: () => ({ on: false, peak: 40, gain: 50, limit: false, meter: 'gr' }),
+  limBands: () => [[100, 'lowshelf'], [200, 'peaking'], [400, 'peaking'], [800, 'peaking'], [1600, 'peaking'], [3200, 'highshelf']].map(([f, type]) => ({ on: true, prio: 0, gain: 0, f, q: 1, type })),
+  lim: () => ({ on: true, thresh: -7, ceiling: -1, release: 1, character: 'Default', separation: 'Medium', quantize: 24, dither: 'Type1', shaping: 'Normal', idr: true, bands: DEF.limBands() }),
 };
 const shThrDb = (v) => -2 - v * 1.2;
+// Maximizer release: shown in the classic 0.01…1000 scale, 1.00 ≈ 80 ms here; the character picks auto-release behaviour
+const LIM_CHAR = { Default: [1, true], ARC: [1.5, true], Fast: [0.6, false], Smooth: [2, false] };
+const limMs = (L) => clamp(80 * Math.sqrt(Math.max(0.01, L.release)) * (LIM_CHAR[L.character] || LIM_CHAR.Default)[0], 8, 1500);
+function upgradeLim(m) {
+  const L = m.lim || {};
+  if (!L.bands) {
+    const fresh = DEF.lim();
+    if (L.release != null && L.release > 5) L.release = Math.round(Math.pow(L.release / 80, 2) * 100) / 100; // old value in ms
+    if (L.arc === false) L.character = 'Fast';
+    delete L.arc; delete L.gain;
+    m.lim = { ...fresh, ...L, bands: fresh.bands };
+  }
+  if (m.lim.on == null) m.lim.on = true;
+  return m;
+}
 const shGainDb = (v) => v * 0.5;
 function makeRegionSet(start, variant) {
   const out = []; let t = start;
@@ -105,10 +122,10 @@ function newProject(name = 'Новый ролик') {
 }
 function baseProject(name) {
   return {
-    id: uid(), name, created: Date.now(), updated: Date.now(), v: 2,
+    id: uid(), name, created: Date.now(), updated: Date.now(), v: 3, loop: { s: 0, e: 0, on: false },
     tracks: [
-      { id: 'v1', name: 'Голос', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('voice') }, vox: DEF.vox(-12), deess: DEF.deessVoice(), drive: DEF.drive(0) },
-      { id: 'v2', name: 'Голос радио', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('radio') }, vox: DEF.vox(-15), deess: DEF.deessVoice(), drive: DEF.drive(0.35) },
+      { id: 'v1', name: 'Голос', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('voice') }, vox: DEF.vox(-12), la2a: DEF.la2a(), deess: DEF.deessVoice(), drive: DEF.drive(0) },
+      { id: 'v2', name: 'Голос радио', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('radio') }, vox: DEF.vox(-15), la2a: DEF.la2a(), deess: DEF.deessVoice(), drive: DEF.drive(0.35) },
       { id: 'mu', name: 'Музыка', kind: 'music', vol: -12, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('music') }, duck: DEF.duck() },
       { id: 'fx', name: 'Эффекты', kind: 'fx', vol: 0, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('fx') } },
     ],
@@ -118,7 +135,16 @@ function baseProject(name) {
 }
 // Bring projects saved by 0.1 up to the current structure
 function migrate(p) {
-  if ((p.v || 1) >= 2) return p;
+  if ((p.v || 1) < 2) migrateV1(p);
+  if (p.v < 3) {
+    for (const t of p.tracks) if (t.kind === 'voice' && !t.la2a) t.la2a = DEF.la2a();
+    upgradeLim(p.master);
+    p.v = 3;
+  }
+  if (!p.loop) p.loop = { s: 0, e: 0, on: false };
+  return p;
+}
+function migrateV1(p) {
   for (const t of p.tracks) {
     if (Array.isArray(t.eq)) t.eq = { on: true, bands: t.eq };
     if (t.kind === 'voice') {
@@ -140,18 +166,17 @@ function migrate(p) {
   if (m.fades == null) m.fades = true;
   m.format = m.format || 'wav';
   p.v = 2;
-  return p;
 }
 // FX chains in processing order (shown like Reaper's FX chain)
-const FX_NAMES = { declick: 'De-crackle', eq: 'Parametric EQ', vox: 'Vocal Leveler', deess: 'De-Esser', drive: 'Saturation', duck: 'Spectral Ducker', mb: 'Multiband Dynamics', sh: 'Opto/Discrete Comp', lim: 'Maximizer', stats: 'Audio Statistics' };
+const FX_NAMES = { declick: 'De-crackle', eq: 'Parametric EQ', vox: 'Vocal Leveler', deess: 'De-Esser', drive: 'Saturation', duck: 'Spectral Ducker', mb: 'Multiband Dynamics', sh: 'Opto/Discrete Comp', lim: 'Multimaximizer', stats: 'Audio Statistics', la2a: 'Opto Leveler 2A' };
 function chainFor(t) {
   if (t === 'master') return ['mb', 'eq', 'deess', 'sh', 'lim', 'stats'];
-  if (t.kind === 'voice') return ['declick', 'eq', 'vox', 'deess', 'drive'];
+  if (t.kind === 'voice') return ['declick', 'eq', 'vox', 'la2a', 'deess', 'drive'];
   if (t.kind === 'music') return ['eq', 'duck'];
   return ['eq'];
 }
 const targetObj = (id) => (id === 'master' ? P.master : P.tracks.find((t) => t.id === id));
-const fxOn = (obj, key) => (key === 'stats' || key === 'lim' ? true : obj[key] && obj[key].on !== false);
+const fxOn = (obj, key) => (key === 'stats' ? true : !!obj[key] && obj[key].on !== false);
 
 let P = null;                 // current project
 const buffers = new Map();    // fileId -> { buf, peaks }
@@ -296,7 +321,8 @@ const PR = {
     const s = m.sh;
     return { on: s.on, oOn: s.oOn, oThr: shThrDb(s.oThr), oGain: shGainDb(s.oGain), dOn: s.dOn, dThr: shThrDb(s.dThr), dRatio: SH_RATIOS[s.dRatio], dAtt: SH_ATTS[s.dAtt], dRec: SH_RECS[s.dRec], dGain: shGainDb(s.dGain), xf: s.xf, mix: s.mix / 100 };
   },
-  lim: (m, ov = {}) => ({ gain: ov.limGain ?? -m.lim.thresh, ceiling: m.lim.ceiling, release: m.lim.release, arc: m.lim.arc }),
+  lim: (m, ov = {}) => ({ on: m.lim.on !== false, gain: ov.limGain ?? -m.lim.thresh, ceiling: m.lim.ceiling, release: limMs(m.lim), arc: (LIM_CHAR[m.lim.character] || LIM_CHAR.Default)[1] }),
+  la2a: (t) => ({ ...t.la2a }),
 };
 
 async function buildGraph(ctx, live, ov = {}) {
@@ -317,7 +343,8 @@ async function buildGraph(ctx, live, ov = {}) {
   m.deess = W('efir-deess', PR.deess(M.deess), 'master.deess');
   m.sh = W('efir-sh', PR.sh(M), 'master.sh');
   m.lim = W('efir-limiter', PR.lim(M, ov), 'master.lim');
-  m.input.connect(m.mb); m.mb.connect(m.eq[0]); m.eq[MAXB - 1].connect(m.deess); m.deess.connect(m.sh); m.sh.connect(m.lim); m.lim.connect(ctx.destination);
+  m.l3 = []; for (let i = 0; i < 6; i++) { m.l3.push(ctx.createBiquadFilter()); if (i) m.l3[i - 1].connect(m.l3[i]); }
+  m.input.connect(m.mb); m.mb.connect(m.eq[0]); m.eq[MAXB - 1].connect(m.deess); m.deess.connect(m.sh); m.sh.connect(m.l3[0]); m.l3[5].connect(m.lim); m.lim.connect(ctx.destination);
   g.workers.push(m.mb, m.deess, m.sh, m.lim);
   if (live) {
     m.anIn = an(); m.input.connect(m.anIn);
@@ -333,13 +360,14 @@ async function buildGraph(ctx, live, ov = {}) {
     if (t.kind === 'voice') {
       n.declick = W('efir-declick', PR.declick(t), t.id + '.declick');
       n.vox = W('efir-vox', PR.vox(t), t.id + '.vox');
+      n.la2a = W('efir-la2a', PR.la2a(t), t.id + '.la2a');
       n.deess = W('efir-deess', PR.deess(t.deess), t.id + '.deess');
       n.drive = ctx.createWaveShaper(); n.drive.oversample = '4x';
-      n.input.connect(n.declick); n.declick.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vox); n.vox.connect(n.deess); n.deess.connect(n.drive); n.drive.connect(n.vol);
+      n.input.connect(n.declick); n.declick.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vox); n.vox.connect(n.la2a); n.la2a.connect(n.deess); n.deess.connect(n.drive); n.drive.connect(n.vol);
       n.vol.connect(n.pan);
       n.post = delay(LAT.duck); n.pan.connect(n.post); n.post.connect(m.input);
       n.pan.connect(sc);
-      g.workers.push(n.declick, n.vox, n.deess);
+      g.workers.push(n.declick, n.vox, n.la2a, n.deess);
     } else if (t.kind === 'music') {
       n.input.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vol); n.vol.connect(n.pan);
       n.pre = delay(VOICE_LAT); n.pan.connect(n.pre);
@@ -369,6 +397,7 @@ function applyGraph(g, ov = {}) {
     if (t.kind === 'voice') {
       n.declick.port.postMessage(PR.declick(t));
       n.vox.port.postMessage(PR.vox(t));
+      n.la2a.port.postMessage(PR.la2a(t));
       n.deess.port.postMessage(PR.deess(t.deess));
       n.drive.curve = t.drive.on ? driveCurve(t.drive.amount) : null;
     }
@@ -379,6 +408,7 @@ function applyGraph(g, ov = {}) {
   applyEQ(m.eq, M.eq);
   m.deess.port.postMessage(PR.deess(M.deess));
   m.sh.port.postMessage(PR.sh(M));
+  M.lim.bands.forEach((b, i) => setBand(m.l3[i], M.lim.on !== false && b.on !== false ? { ...b, g: b.gain, on: true } : null));
   m.lim.port.postMessage(PR.lim(M, ov));
 }
 function killGraph(g) {
@@ -406,9 +436,10 @@ function gainAt(c, F, t) {
   if (t > c.dur - F.fout) g *= fadeShape((c.dur - t) / F.fout);
   return g;
 }
-function scheduleClips(g, from, to, t0) {
-  const ctx = g.ctx, srcs = [];
-  for (const c of P.clips) {
+function scheduleClips(g, from, to, t0) { return scheduleList(g.ctx, P.clips, from, to, t0, (c) => g.tracks[c.track].input); }
+function scheduleList(ctx, clips, from, to, t0, destFor) {
+  const srcs = [];
+  for (const c of clips) {
     const e = buffers.get(c.src); if (!e) continue;
     const cs = c.start, ce = c.start + c.dur;
     if (ce <= from || cs >= to) continue;
@@ -424,7 +455,15 @@ function scheduleClips(g, from, to, t0) {
       for (let i = 0; i < n; i++) curve[i] = gainAt(c, F, s0 + (s1 - s0) * i / (n - 1)) * lin;
       try { gn.gain.setValueCurveAtTime(curve, when + (s0 - rel0), s1 - s0 - 0.0005); } catch (err) { console.warn(err); }
     }
-    s.connect(gn); gn.connect(g.tracks[c.track].input);
+    // 3 ms micro-fades where playback cuts into a clip (loop wrap, start mid-clip) so there is no click
+    let node = gn;
+    if (a > cs + 1e-4 || b < ce - 1e-4) {
+      const eg = ctx.createGain(), d = b - a;
+      if (a > cs + 1e-4) { eg.gain.setValueAtTime(0, when); eg.gain.linearRampToValueAtTime(1, when + Math.min(0.003, d / 2)); }
+      if (b < ce - 1e-4 && isFinite(b)) { eg.gain.setValueAtTime(1, when + d - Math.min(0.003, d / 2)); eg.gain.linearRampToValueAtTime(0, when + d); }
+      gn.connect(eg); node = eg;
+    }
+    s.connect(gn); node.connect(destFor(c));
     s.start(when, c.offset + rel0, rel1 - rel0);
     srcs.push(s);
   }
@@ -432,7 +471,7 @@ function scheduleClips(g, from, to, t0) {
 }
 
 /* ================= Transport ================= */
-const T = { g: null, srcs: [], t0: 0, from: 0, stopAt: Infinity, returnTo: 0 };
+const T = { g: null, srcs: [], segs: [], loop: null, stopAt: Infinity, returnTo: 0 };
 function projectEnd() { let e = 0; for (const c of P.clips) e = Math.max(e, c.start + c.dur); for (const r of P.regions) e = Math.max(e, r.start + r.len); return e; }
 async function play(from = P.playhead, stopAt = Infinity) {
   const ctx = getCtx();
@@ -440,10 +479,25 @@ async function play(from = P.playhead, stopAt = Infinity) {
   stop(false);
   await Promise.all(P.clips.map((c) => ensureBuffer(c.src)));
   T.g = await buildGraph(ctx, true);
-  T.from = from; T.returnTo = from; T.t0 = ctx.currentTime + 0.08;
-  T.stopAt = Math.min(stopAt, projectEnd() + 0.5);
-  T.srcs = scheduleClips(T.g, from, Infinity, T.t0);
+  const L = P.loop;
+  T.loop = L && L.on && L.e - L.s > 0.05 && stopAt === Infinity && from < L.e - 0.01 ? { s: L.s, e: L.e } : null;
+  T.returnTo = from; T.segs = []; T.srcs = [];
+  T.stopAt = T.loop ? Infinity : Math.min(stopAt, projectEnd() + 0.5);
+  addSeg(from, T.loop ? T.loop.e : Infinity, ctx.currentTime + 0.08);
+  pumpLoop();
   S.playing = true; Meter.reset(); updateToolbar(); redraw();
+}
+function addSeg(from, to, ctx0) { T.segs.push({ from, to, ctx0 }); T.srcs.push(...scheduleClips(T.g, from, to, ctx0)); }
+// keep ~2 s of loop iterations scheduled ahead on the same graph, so the loop is seamless
+function pumpLoop() {
+  if (!T.loop || !T.g) return;
+  let last = T.segs[T.segs.length - 1];
+  while (last.ctx0 + (last.to - last.from) < actx.currentTime + 2) {
+    addSeg(T.loop.s, T.loop.e, last.ctx0 + (last.to - last.from));
+    last = T.segs[T.segs.length - 1];
+  }
+  if (T.segs.length > 8) T.segs.splice(0, T.segs.length - 8);
+  if (T.srcs.length > 400) T.srcs.splice(0, T.srcs.length - 200);
 }
 function stop(returnHead = true) {
   for (const s of T.srcs) { try { s.stop(); } catch {} }
@@ -455,7 +509,11 @@ function stop(returnHead = true) {
 }
 function transportTime() {
   if (!S.playing) return P.playhead;
-  return T.from + Math.max(0, actx.currentTime - T.t0 - latency(actx) - (actx.outputLatency || 0));
+  const t = actx.currentTime - latency(actx) - (actx.outputLatency || 0);
+  let seg = T.segs[0];
+  if (!seg) return P.playhead;
+  for (const x of T.segs) if (x.ctx0 <= t) seg = x;
+  return seg.from + Math.max(0, Math.min(t - seg.ctx0, seg.to - seg.from));
 }
 const togglePlay = () => (S.playing ? stop() : play());
 function applyLive() { if (T.g) applyGraph(T.g); }
@@ -543,6 +601,7 @@ function frame() {
   S.raf = 0;
   let t = P.playhead;
   if (S.playing) {
+    pumpLoop();
     t = transportTime();
     if (t >= T.stopAt) stop();
     else {
@@ -588,6 +647,14 @@ function draw() {
     x.fillText(fmtTime(t), px + 4, 26);
   }
   if (tToX(0) > 0) { x.fillStyle = 'rgba(0,0,0,.3)'; x.fillRect(0, TOP, tToX(0), Hh - TOP); }
+  // loop range: band in the ruler, light tint over the tracks when the loop is on
+  const LP = P.loop;
+  if (LP && LP.e - LP.s > 0.01) {
+    const a = tToX(LP.s), b = tToX(LP.e);
+    x.fillStyle = LP.on ? 'rgba(255,214,90,.30)' : 'rgba(255,255,255,.12)'; x.fillRect(a, 0, b - a, RULER_H);
+    x.fillStyle = LP.on ? '#FFD65A' : '#9A9FA1'; x.fillRect(a, 0, 2, RULER_H); x.fillRect(b - 2, 0, 2, RULER_H);
+    if (LP.on) { x.fillStyle = 'rgba(255,214,90,.05)'; x.fillRect(a, TOP, b - a, Hh - TOP); }
+  }
   // regions (Reaper: coloured bars in the region lane, dashed edges through the tracks)
   x.font = '600 11px -apple-system, system-ui, sans-serif'; x.textBaseline = 'middle';
   for (const r of P.regions) {
@@ -712,7 +779,7 @@ function onDown(e) {
   if (Drag.ptrs.size > 2) return;
   const t = xToT(px);
   const D = { kind: null, sx: px, sy: py, t0: t, moved: false, shift: e.shiftKey };
-  if (py < RULER_H) { D.kind = 'seek'; seekTo(t); }
+  if (py < RULER_H) { D.kind = 'ruler'; }
   else if (py < TOP) {
     const h = hitRegion(px);
     if (h) {
@@ -764,6 +831,11 @@ function onMove(e) {
   const dt = dx / S.pps;
   switch (D.kind) {
     case 'seek': seekTo(xToT(px)); break;
+    case 'ruler': {
+      const a = snapTime(D.t0, new Set()), b = snapTime(xToT(px), new Set());
+      P.loop = { s: Math.max(0, Math.min(a, b)), e: Math.max(0, Math.max(a, b)), on: true };
+      updateToolbar(); break;
+    }
     case 'pan': case 'empty': S.x0 = D.x00 - dt; break;
     case 'regMove': D.reg.start = Math.max(0, snapTime(D.orig.start + dt, new Set(), D.orig.len, D.reg.id)); break;
     case 'regLen': D.reg.len = Math.max(0.5, snapTime(D.orig.start + D.orig.len + dt, new Set(), null, D.reg.id) - D.reg.start); break;
@@ -804,6 +876,11 @@ function onUp(e) {
   if (Drag.pinch) { if (Drag.ptrs.size === 0) Drag.pinch = null; return; }
   const D = Drag.active; Drag.active = null; Drag.snapX = null;
   if (!D) return;
+  if (D.kind === 'ruler') {
+    if (!D.moved) seekTo(D.t0);
+    else { commit(); if (S.playing) restartPlayback(); }
+    redraw(); return;
+  }
   if (D.kind === 'empty' && !D.moved) {
     // tap on empty space: deselect and put the cursor there
     S.sel.clear(); S.selRegion = null; S.inspector = 'none';
@@ -905,6 +982,87 @@ function duplicateRegion(r) {
 }
 
 
+/* ---------- glue (consolidate) and time-stretch: rendered into new audio files, undoable ---------- */
+function makeBuffer(ch) {
+  const b = new AudioBuffer({ length: Math.max(1, ch[0].length), numberOfChannels: 2, sampleRate: SR });
+  b.copyToChannel(ch[0], 0); b.copyToChannel(ch[1] || ch[0], 1);
+  return b;
+}
+async function addRenderedFile(ch, name) {
+  const blob = encodeWav24At(ch.length === 1 ? [ch[0], ch[0]] : ch, SR);
+  const fileId = uid();
+  await Store.put('blobs', fileId, blob);
+  const buf = makeBuffer(ch);
+  buffers.set(fileId, { buf, peaks: computePeaks(buf) });
+  P.files[fileId] = { name, size: blob.size, dur: buf.duration };
+  return { fileId, dur: buf.duration };
+}
+function sliceClipAudio(c) {
+  const e = buffers.get(c.src), a = Math.round(c.offset * SR), n = Math.round(c.dur * SR);
+  return [0, 1].map((k) => e.buf.getChannelData(Math.min(k, e.buf.numberOfChannels - 1)).slice(a, a + n));
+}
+let busy = false;
+async function withBusy(label, fn) {
+  if (busy) { toast('Подожди, идёт обработка'); return null; }
+  busy = true; stop(false);
+  try { return await fn(); } catch (e) { console.error(e); toast('Не получилось: ' + e.message, 4000); return null; } finally { busy = false; }
+}
+async function consolidateClips(list) {
+  const track = list[0].track;
+  list = list.filter((c) => c.track === track).sort((a, b) => a.start - b.start);
+  await Promise.all(list.map((c) => ensureBuffer(c.src)));
+  const s = Math.min(...list.map((c) => c.start)), e = Math.max(...list.map((c) => c.start + c.dur));
+  const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil((e - s) * SR)), SR);
+  scheduleList(ctx, list, s, e, 0, () => ctx.destination);
+  const out = await ctx.startRendering();
+  const base = list[0].name.replace(/ ⏩\d+%$/, '').replace(/ \(склейка\)$/, '');
+  const { fileId, dur } = await addRenderedFile([out.getChannelData(0), out.getChannelData(1)], base + '_склейка.wav');
+  for (const c of list) P.clips.splice(P.clips.indexOf(c), 1);
+  const nc = { id: uid(), track, src: fileId, name: base + ' (склейка)', start: s, offset: 0, dur, gain: 0, fin: 0.003, fout: 0.003 };
+  P.clips.push(nc);
+  return nc;
+}
+async function glueSel() {
+  const cs = selClips(); if (!cs.length) { toast('Выдели клипы'); return; }
+  await withBusy('glue', async () => {
+    toast('Склеиваю…', 8000);
+    const nc = await consolidateClips(cs);
+    S.sel = new Set([nc.id]); S.inspector = 'clip';
+    commit(); renderBar(); redraw(); toast('Склеено в один клип');
+  });
+}
+async function stretchSel(tempo) {
+  let cs = selClips();
+  if (!cs.length) { toast('Выдели клип голоса'); return; }
+  if (!isFinite(tempo) || Math.abs(tempo - 1) < 0.0005 || tempo < 0.5 || tempo > 2) { toast('Скорость от 50% до 200%'); return; }
+  await withBusy('stretch', async () => {
+    let c = cs[0];
+    if (cs.length > 1) { toast('Склеиваю выделенное…', 8000); c = await consolidateClips(cs); }
+    await ensureBuffer(c.src);
+    const mode = ls.get('stretchMode', 'st');
+    const out = await stretchAudio(sliceClipAudio(c), SR, tempo, mode, (p) => toast(`Ускоряю… ${Math.round(p * 100)}%`, 8000));
+    const total = (c.tempo || 1) * tempo, pct = Math.round(total * 1000) / 10;
+    const base = c.name.replace(/ ⏩[\d.]+%$/, '');
+    const { fileId, dur } = await addRenderedFile(out, `${base}_${pct}%.wav`);
+    const oldEnd = c.start + c.dur;
+    Object.assign(c, { src: fileId, offset: 0, dur, tempo: total, name: `${base} ⏩${pct}%`, fin: Math.min(c.fin, dur / 2), fout: Math.min(c.fout, dur / 2) });
+    if (S.ripple) { const d = c.start + dur - oldEnd; for (const o of P.clips) if (o !== c && o.track === c.track && o.start >= oldEnd - 1e-6) o.start += d; }
+    S.sel = new Set([c.id]); S.inspector = 'clip';
+    commit(); renderBar(); redraw(); toast(`Готово: ${pct}% · ${dur.toFixed(2)} с (${mode === 'speech' ? 'речь' : 'SoundTouch'})`, 3000);
+  });
+}
+function selSpan() { const cs = selClips(); if (!cs.length) return 0; const tr = cs[0].track, l = cs.filter((c) => c.track === tr); return Math.max(...l.map((c) => c.start + c.dur)) - Math.min(...l.map((c) => c.start)); }
+function loopTo(s, e) { P.loop = { s, e, on: true }; commit(); updateToolbar(); redraw(); if (S.playing) restartPlayback(); }
+function toggleLoop() {
+  if (!P.loop || P.loop.e - P.loop.s < 0.05) {
+    const cs = selClips(), r = P.regions.find((k) => k.id === S.selRegion);
+    if (cs.length) return loopTo(Math.min(...cs.map((c) => c.start)), Math.max(...cs.map((c) => c.start + c.dur)));
+    if (r) return loopTo(r.start, r.start + r.len);
+    toast('Проведи пальцем по линейке времени, чтобы задать участок лупа', 3500); return;
+  }
+  P.loop.on = !P.loop.on; commit(); updateToolbar(); redraw(); if (S.playing) restartPlayback();
+}
+
 async function renderRange(start, len, limGain) {
   const extra = TOTAL_LAT + 32;
   const frames = Math.ceil(len * SR);
@@ -1003,6 +1161,25 @@ async function processRegion(r, onStep) {
 }
 
 /* ================= Encoders ================= */
+function encodeWavQ(ch, L) {
+  if ((L.quantize | 0) !== 16) return L.dither === 'None' ? encodeWavBits(ch, 24, false) : encodeWav24(ch);
+  return encodeWavBits(ch, 16, L.dither !== 'None');
+}
+function encodeWavBits(ch, bits, dither) {
+  const n = ch[0].length, nc = ch.length, bps = bits / 8, data = n * nc * bps;
+  const buf = new ArrayBuffer(44 + data), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + data, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, nc, true); v.setUint32(24, SR, true);
+  v.setUint32(28, SR * nc * bps, true); v.setUint16(32, nc * bps, true); v.setUint16(34, bits, true);
+  w(36, 'data'); v.setUint32(40, data, true);
+  let o = 44; const max = bits === 16 ? 32767 : 8388607;
+  for (let i = 0; i < n; i++) for (let c = 0; c < nc; c++) {
+    let s = Math.round(clamp(ch[c][i], -1, 1) * max + (dither ? Math.random() - Math.random() : 0)); s = clamp(s, -max - 1, max);
+    if (bits === 16) { v.setInt16(o, s, true); o += 2; } else { v.setUint8(o, s & 255); v.setUint8(o + 1, (s >> 8) & 255); v.setUint8(o + 2, (s >> 16) & 255); o += 3; }
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
 function encodeWav24(ch) {
   const n = ch[0].length, nc = ch.length, bps = 3, data = n * nc * bps;
   const buf = new ArrayBuffer(44 + data), v = new DataView(buf);
@@ -1081,6 +1258,7 @@ function updateToolbar() {
   $('#tstate').textContent = S.playing ? 'Воспроизведение' : 'Остановлено';
   $('#bSnap').classList.toggle('on', S.snap);
   $('#bRipple').classList.toggle('on', S.ripple);
+  const lb = $('#bLoop'); if (lb) lb.classList.toggle('on', !!(P.loop && P.loop.on && P.loop.e > P.loop.s));
   $('#bUndo').disabled = S.hidx <= 0; $('#bRedo').disabled = S.hidx >= S.hist.length - 1;
   $('#projName').textContent = P.name;
 }
@@ -1125,10 +1303,23 @@ function renderMasterStrip() {
   box.innerHTML = '';
   for (const k of chainFor('master')) {
     const on = fxOn(P.master, k);
-    const chk = k === 'stats' || k === 'lim' ? el('span', { class: 'dotfx on' }) : el('input', { type: 'checkbox', checked: on, 'aria-label': 'Включить ' + FX_NAMES[k] });
+    const chk = k === 'stats' ? el('span', { class: 'dotfx on' }) : el('input', { type: 'checkbox', checked: on, 'aria-label': 'Включить ' + FX_NAMES[k] });
     if (chk.tagName === 'INPUT') chk.addEventListener('change', () => { P.master[k].on = chk.checked; applyLive(); commit(); renderMasterStrip(); });
     box.append(el('div', { class: 'mfxrow' + (on ? '' : ' off') }, chk, el('button', { onclick: () => openFx('master', k) }, FX_NAMES[k])));
   }
+  const all = allBypassed('master');
+  box.append(el('button', { class: 'mbyp' + (all ? ' on' : ''), onclick: () => { toggleBypassAll('master'); renderMasterStrip(); } }, all ? 'Включить все FX' : 'Bypass all'));
+}
+// Bypass every effect in a chain and remember what was on, so the second press restores exactly that
+function allBypassed(target) {
+  const obj = targetObj(target), chain = chainFor(target === 'master' ? 'master' : obj).filter((k) => k !== 'stats');
+  return chain.every((k) => !fxOn(obj, k));
+}
+function toggleBypassAll(target) {
+  const obj = targetObj(target), chain = chainFor(target === 'master' ? 'master' : obj).filter((k) => k !== 'stats');
+  if (!allBypassed(target)) { obj._byp = {}; for (const k of chain) { obj._byp[k] = fxOn(obj, k); obj[k].on = false; } }
+  else { for (const k of chain) obj[k].on = obj._byp ? obj._byp[k] !== false : true; delete obj._byp; }
+  applyLive(); commit(); renderTCP();
 }
 
 /* ---------- context bar (item / region properties) ---------- */
@@ -1143,6 +1334,7 @@ function renderBar() {
     el('span', {}, el('b', {}, '+'), ' на дорожке — добавить файл'),
     el('span', {}, 'тап — курсор, S — разрезать'),
     el('span', {}, 'наложи клипы — будет кроссфейд'),
+    el('span', {}, 'проведи по линейке — луп'),
     el('span', {}, 'имя дорожки или FX — обработка')));
 }
 function numField(id, value, step, min, onSet, w = '4.6em') {
@@ -1170,9 +1362,30 @@ function barClip(box, cs) {
       el('button', { class: 'btn', onclick: () => nudge(0.01) }, '10мс→'),
       el('button', { class: 'btn', onclick: duplicateSel }, 'Дубль'),
       el('button', { class: 'btn', onclick: normalizeSel }, 'Пик −1'),
+      el('button', { class: 'btn', onclick: glueSel, title: 'Склеить выделенные клипы в один файл' }, 'Склеить'),
+      el('button', { class: 'btn', onclick: () => loopTo(Math.min(...cs.map((k) => k.start)), Math.max(...cs.map((k) => k.start + k.dur))) }, 'Луп'),
       el('button', { class: 'btn danger', onclick: deleteSel }, S.ripple ? 'Удалить со сдвигом' : 'Удалить')));
   if (c.track === 'mu') box.append(raoInline(c.src));
+  else box.append(speedBar(cs));
   refreshBar();
+}
+function speedBar(cs) {
+  const mode = ls.get('stretchMode', 'st');
+  const pct = numField('spPct', 110, 0.5, 50, (v) => stretchSel(v / 100), '4.6em');
+  const span = selSpan();
+  const len = numField('spLen', span.toFixed(2), 0.01, 0.5, (v) => stretchSel(selSpan() / v), '5.2em');
+  return el('div', { class: 'cgrp speed' },
+    el('b', {}, 'Ускорить'),
+    ...[103, 105, 108, 110, 115, 120].map((p) => el('button', { class: 'btn sp', onclick: () => stretchSel(p / 100) }, '+' + (p - 100) + '%')),
+    el('button', { class: 'btn sp', onclick: () => stretchSel(0.95), title: 'Замедлить на 5%' }, '−5%'),
+    el('label', { class: 'cgrp' }, pct, '%'),
+    el('label', { class: 'cgrp' }, 'под', len, 'с'),
+    seg2Small([['st', 'SoundTouch'], ['speech', 'Речь']], mode, (v) => { ls.set('stretchMode', v); }));
+}
+function seg2Small(options, value, onChange) {
+  const box = el('div', { class: 'seg2 small' });
+  for (const [v, t] of options) { const b = el('button', { class: v === value ? 'on' : '', onclick: () => { for (const k of box.children) k.classList.remove('on'); b.classList.add('on'); onChange(v); } }, t); box.append(b); }
+  return box;
 }
 function raoInline(fileId) {
   const f = P.files[fileId] || { name: '?' }, code = findCode(f.name);
@@ -1192,6 +1405,7 @@ function barRegion(box, r) {
     el('div', { class: 'cgrp' },
       el('button', { class: 'btn primary', onclick: () => { P.playhead = r.start; play(r.start, r.start + r.len); } }, 'Слушать'),
       el('button', { class: 'btn', onclick: () => zoomRegion(r) }, 'Показать'),
+      el('button', { class: 'btn', onclick: () => loopTo(r.start, r.start + r.len) }, 'Луп'),
       el('button', { class: 'btn', onclick: () => duplicateRegion(r) }, 'Вариант-копия'),
       el('button', { class: 'btn', onclick: addVariantSet }, '+ набор 30/15/10/5'),
       el('button', { class: 'btn danger', onclick: deleteRegion }, 'Удалить')));
@@ -1231,10 +1445,12 @@ function openFx(target, key) {
   const list = el('div', { class: 'fxlist', role: 'listbox' });
   chain.forEach((k, i) => {
     const on = fxOn(obj, k);
-    const chk = k === 'stats' || k === 'lim' ? el('span', { class: 'dotfx on' }) : el('input', { type: 'checkbox', checked: on, 'aria-label': 'Включить ' + FX_NAMES[k] });
+    const chk = k === 'stats' ? el('span', { class: 'dotfx on' }) : el('input', { type: 'checkbox', checked: on, 'aria-label': 'Включить ' + FX_NAMES[k] });
     if (chk.tagName === 'INPUT') chk.addEventListener('change', (e) => { e.stopPropagation(); obj[k].on = chk.checked; applyLive(); commit(); renderTCP(); openFx(target, FXW.key); });
     list.append(el('div', { class: 'fxrow' + (k === key ? ' sel' : '') + (on ? '' : ' off'), role: 'option', onclick: (e) => { if (e.target !== chk) openFx(target, k); } }, chk, el('span', {}, FX_NAMES[k])));
   });
+  const byp = allBypassed(target);
+  list.append(el('button', { class: 'mbyp' + (byp ? ' on' : ''), onclick: () => { toggleBypassAll(target); renderMasterStrip(); openFx(target, FXW.key); } }, byp ? 'Включить все FX' : 'Bypass all'));
   list.append(el('p', { class: 'fxnote' }, 'Обработка идёт сверху вниз'));
   const gui = el('div', { class: 'fxgui' });
   const win = el('div', { class: 'fxwin', role: 'dialog', 'aria-modal': 'true' },
@@ -1274,7 +1490,7 @@ async function openExport() {
   if (!P.regions.length) { toast('Нет регионов. Добавь регион на панели региона.'); return; }
   const checks = P.regions.map((r) => el('label', { class: 'tog' }, el('input', { type: 'checkbox', checked: true, 'data-id': r.id }), el('span', {}, `${r.name}`, el('small', { class: 'mono' }, `  ${r.len} с`))));
   const fmtSel = el('div', { class: 'seg' },
-    ...[['wav', 'WAV 48 кГц / 24 бит'], ['mp3', 'MP3 320']].map(([v, t]) => el('label', {}, el('input', { type: 'radio', name: 'fmt', value: v, checked: M.format === v }), el('span', {}, t))));
+    ...[['wav', `WAV 48 кГц / ${P.master.lim.quantize === 16 ? 16 : 24} бит`], ['mp3', 'MP3 320']].map(([v, t]) => el('label', {}, el('input', { type: 'radio', name: 'fmt', value: v, checked: M.format === v }), el('span', {}, t))));
   const res = el('div', { class: 'results' });
   const body = el('div', {},
     el('h4', {}, 'Регионы'), el('div', { class: 'checks' }, ...checks),
@@ -1304,7 +1520,7 @@ async function openExport() {
         row.append(el('td', { class: 'mono' + (missed ? ' bad' : ''), title: missed ? 'Цель не достигнута: лимитер упёрся в предел. Проверь, нет ли в регионе тишины.' : null }, fmtDb(stats.rms, 2)), el('td', { class: 'mono dim' }, `${fmtDb(stats.rmsL)} / ${fmtDb(stats.rmsR)}`), el('td', { class: 'mono' }, fmtDb(stats.peak, 2)),
           el('td', { class: 'mono ' + (okTp ? 'ok' : 'bad') }, fmtDb(stats.tp, 2)), el('td', { class: 'mono' }, fmtDb(stats.lufs, 1)), el('td', { class: 'mono dim' }, fmtDb(-stats.gain)));
         if (encode) {
-          const blob = fmt === 'mp3' ? await encodeMp3(ch) : encodeWav24(ch);
+          const blob = fmt === 'mp3' ? await encodeMp3(ch) : encodeWavQ(ch, P.master.lim);
           const name = `${sanitize(P.name)}_${sanitize(r.name)}.${fmt}`;
           files.push(new File([blob], name, { type: blob.type }));
         }
@@ -1430,7 +1646,7 @@ function bindUI() {
   $('#bRipple').onclick = () => { S.ripple = !S.ripple; ls.set('ripple', S.ripple); updateToolbar(); renderBar(); };
   $('#bZin').onclick = () => zoom(1.5); $('#bZout').onclick = () => zoom(1 / 1.5); $('#bFit').onclick = zoomFit;
   $('#bExport').onclick = openExport; $('#bRao').onclick = openRao; $('#projName').onclick = openProjects;
-  $('#bPresets').onclick = openPresets; $('#bConvert').onclick = openConverter;
+  $('#bPresets').onclick = openPresets; $('#bConvert').onclick = openConverter; $('#bLoop').onclick = toggleLoop;
   $('#bMaster').onclick = () => openFx('master');
   $('#mtitle').onclick = () => openFx('master');
   document.addEventListener('keydown', (e) => {
@@ -1447,6 +1663,8 @@ function bindUI() {
     else if (e.key === '=' || e.key === '+') zoom(1.5);
     else if (e.key === '-') zoom(1 / 1.5);
     else if (e.code === 'Home') seekTo(0);
+    else if (!mod && e.code === 'KeyR') toggleLoop();
+    else if (!mod && e.code === 'KeyG') glueSel();
     else if (e.code === 'Escape') { if ($('#modal')) closeModal(); else { S.sel.clear(); S.selRegion = null; S.inspector = 'none'; renderBar(); redraw(); } }
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow().catch(() => {}); });
@@ -1470,7 +1688,7 @@ const Presets = {
   getDefault() { const id = ls.get('presetDefault', null); return id ? this.all().find((p) => p.id === id) || null : null; },
   setDefault(id) { ls.set('presetDefault', id); },
 };
-const PRESET_TRACK_KEYS = ['vol', 'pan', 'declick', 'eq', 'vox', 'deess', 'drive', 'duck'];
+const PRESET_TRACK_KEYS = ['vol', 'pan', 'declick', 'eq', 'vox', 'la2a', 'deess', 'drive', 'duck'];
 function capturePreset(name) {
   const tracks = {};
   for (const t of P.tracks) { tracks[t.id] = {}; for (const k of PRESET_TRACK_KEYS) if (t[k] !== undefined) tracks[t.id][k] = JSON.parse(JSON.stringify(t[k])); }
@@ -1480,6 +1698,8 @@ function capturePreset(name) {
 function applyPresetTo(p, pr) {
   for (const t of p.tracks) { const src = pr.tracks && pr.tracks[t.id]; if (src) for (const k of PRESET_TRACK_KEYS) if (src[k] !== undefined) t[k] = JSON.parse(JSON.stringify(src[k])); }
   if (pr.master) Object.assign(p.master, JSON.parse(JSON.stringify(pr.master)));
+  upgradeLim(p.master);
+  for (const t of p.tracks) if (t.kind === 'voice' && !t.la2a) t.la2a = DEF.la2a();
   return p;
 }
 function openPresets() {

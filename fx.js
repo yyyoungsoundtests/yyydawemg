@@ -574,42 +574,190 @@ FXUI.sh = (obj, ctx) => {
   } };
 };
 
-/* ---- Maximizer (brickwall true-peak limiter) ---- */
+/* ---- shared VU meter face ---- */
+function drawVUFace(c, needle, sub = 'GAIN REDUCTION') {
+  const [x, w, h] = canvas2d(c);
+  const g = x.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#F5ECCF'); g.addColorStop(1, '#DCCFA6');
+  x.fillStyle = '#0a0a0a'; x.fillRect(0, 0, w, h); x.fillStyle = g; x.beginPath(); x.roundRect ? x.roundRect(4, 4, w - 8, h - 8, 8) : x.rect(4, 4, w - 8, h - 8); x.fill();
+  const cxp = w / 2, cy = h * 0.98, R = Math.min(h * 0.68, w * 0.42);
+  const ang = (db) => (-50 + (db + 20) / 23 * 100) * Math.PI / 180;
+  x.strokeStyle = '#222'; x.lineWidth = 1.5; x.beginPath(); x.arc(cxp, cy, R, -Math.PI / 2 + ang(-20), -Math.PI / 2 + ang(0)); x.stroke();
+  x.strokeStyle = '#C8312B'; x.lineWidth = 4; x.beginPath(); x.arc(cxp, cy, R, -Math.PI / 2 + ang(0), -Math.PI / 2 + ang(3)); x.stroke();
+  x.font = `600 ${Math.max(8, h * 0.085)}px -apple-system, system-ui, sans-serif`; x.textAlign = 'center';
+  for (const d of [-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3]) {
+    const a = ang(d) - Math.PI / 2, r1 = R + 2, r2 = R + (d % 5 === 0 || d > -4 ? 9 : 5);
+    x.lineWidth = 1.2; x.strokeStyle = d > 0 ? '#C8312B' : '#222';
+    x.beginPath(); x.moveTo(cxp + Math.cos(a) * r1, cy + Math.sin(a) * r1); x.lineTo(cxp + Math.cos(a) * r2, cy + Math.sin(a) * r2); x.stroke();
+    if ([-20, -10, -5, -3, -1, 0, 1, 3].includes(d)) { x.fillStyle = d > 0 ? '#C8312B' : '#222'; x.fillText(String(d > 0 ? '+' + d : d), cxp + Math.cos(a) * (R + 15), cy + Math.sin(a) * (R + 15) + 3); }
+  }
+  x.fillStyle = '#222'; x.font = `700 ${Math.max(9, h * 0.1)}px -apple-system, system-ui, sans-serif`; x.fillText('VU', cxp, h * 0.64);
+  x.fillStyle = '#555'; x.font = `${Math.max(7, h * 0.07)}px -apple-system, system-ui, sans-serif`; x.fillText(sub, cxp, h * 0.76);
+  const a = ang(Math.max(-20, Math.min(3.5, needle))) - Math.PI / 2;
+  x.strokeStyle = '#111'; x.lineWidth = 1.6; x.beginPath(); x.moveTo(cxp, cy); x.lineTo(cxp + Math.cos(a) * R * 1.02, cy + Math.sin(a) * R * 1.02); x.stroke();
+  x.fillStyle = '#1b1b1b'; x.beginPath(); x.arc(cxp, h - 4, h * 0.14, Math.PI, 0); x.fill();
+  x.textAlign = 'start'; x.lineWidth = 1;
+}
+
+/* ---- Opto leveler (classic tube optical compressor style) ---- */
+FXUI.la2a = (obj, ctx) => {
+  const L = obj.la2a;
+  const n100 = ['0', '10', '20', '30', '40', '50', '60', '70', '80', '90', '100'];
+  const gain = knob({ value: L.gain, min: 0, max: 100, def: 50, size: 104, cls: 'k-2a', labels: n100, label: 'GAIN', fmt: (v) => (v >= 40 ? '+' : '') + ((v - 40) * 0.45).toFixed(1) + ' dB', onInput: (v) => { L.gain = v; ctx.change(); }, onChange: ctx.commit });
+  const peak = knob({ value: L.peak, min: 0, max: 100, def: 40, size: 104, cls: 'k-2a', labels: n100, label: 'PEAK REDUCTION', fmt: (v) => Math.round(v), onInput: (v) => { L.peak = v; ctx.change(); }, onChange: ctx.commit });
+  const vu = el('canvas', { class: 'vu va' });
+  const sw = (opts, key, cls) => el('div', { class: 'sw2a ' + (cls || '') }, ...opts.map(([v, t]) => el('button', { class: String(L[key]) === String(v) ? 'on' : '', onclick: (e) => { L[key] = v; [...e.currentTarget.parentElement.children].forEach((b) => b.classList.toggle('on', b === e.currentTarget)); ctx.change(); ctx.commit(); } }, t)));
+  const lamp = el('span', { class: 'lamp2a' + (L.on ? ' on' : '') });
+  const root = el('div', { class: 'pl pl-2a' },
+    el('div', { class: 'plhead' }, powerBtn(L, ctx), el('b', {}, 'Opto Leveler'), el('span', { class: 'dim' }, 'оптический ламповый компрессор: мягкий, «дышит» вместе с голосом')),
+    el('div', { class: 'face2a' },
+      el('div', { class: 'brand2a' }, el('span', {}, 'LEVELING AMPLIFIER'), el('small', {}, 'OPTICAL · TUBE')),
+      el('div', { class: 'row2a' },
+        gain,
+        el('div', { class: 'mid2a' }, vu,
+          el('div', { class: 'sws2a' },
+            el('div', {}, el('small', {}, 'METER'), sw([['gr', 'GAIN RED.'], ['10', '+10'], ['4', '+4']], 'meter')),
+            el('div', {}, el('small', {}, 'MODE'), sw([[false, 'COMPRESS'], [true, 'LIMIT']], 'limit')),
+            el('div', { class: 'pw2a' }, lamp, el('small', {}, 'POWER')))),
+        peak)),
+    el('p', { class: 'note' }, 'Peak Reduction — сколько поджимать, Gain — громкость на выходе. Compress мягче (≈3:1), Limit плотнее. Стоит в цепочке после Vocal Leveler: можно использовать вместе или вместо него.'));
+  let nd = 0;
+  return { el: root, tick: () => {
+    const m = ctx.gr('la2a'); lamp.classList.toggle('on', L.on !== false);
+    let target = 0;
+    if (S.playing && m) target = L.meter === 'gr' ? -m.gr : L.meter === '10' ? m.out + 8 : m.out + 14;
+    else if (L.meter !== 'gr') target = -20;
+    nd += (target - nd) * 0.12;
+    drawVUFace(vu, nd, L.meter === 'gr' ? 'GAIN REDUCTION' : 'OUTPUT ' + (L.meter === '10' ? '+10' : '+4'));
+  } };
+};
+
+/* ---- Multimaximizer (6-band true-peak limiter, classic multimaximizer layout) ---- */
+const L3_COLORS = ['#E8892B', '#E8D22B', '#3FCF4C', '#E04242', '#3F8CF0', '#B048E0'];
+function l3fader({ value, min, max, log = false, fmt, height = 300, onInput, onChange, meters = [] }) {
+  let v = value;
+  const norm = (x) => (log ? Math.log(x / min) / Math.log(max / min) : (x - min) / (max - min));
+  const den = (n) => { n = clamp(n, 0, 1); return log ? min * Math.pow(max / min, n) : min + n * (max - min); };
+  const badge = el('div', { class: 'l3badge mono' });
+  const track = el('div', { class: 'l3track', style: `height:${height}px` }, ...meters, el('div', { class: 'l3rail' }), badge);
+  const render = () => { badge.style.bottom = `calc(${norm(v) * 100}% - 12px)`; badge.textContent = fmt(v); };
+  let d = null;
+  track.addEventListener('pointerdown', (e) => { e.preventDefault(); track.setPointerCapture(e.pointerId); d = { y: e.clientY, n: norm(v), moved: false }; });
+  track.addEventListener('pointermove', (e) => { if (!d) return; const dy = d.y - e.clientY; if (Math.abs(dy) > 2) d.moved = true; v = den(d.n + dy / height * (e.shiftKey ? 0.25 : 1)); render(); onInput(v); });
+  const end = () => { if (d && d.moved) onChange(v); d = null; };
+  track.addEventListener('pointerup', end); track.addEventListener('pointercancel', end);
+  track.set = (nv) => { v = nv; render(); };
+  render();
+  return track;
+}
+function l3select(options, value, onChange) {
+  const s = el('select', { class: 'l3sel' }, ...options.map(([v, t]) => el('option', { value: v, selected: String(v) === String(value) }, t)));
+  s.addEventListener('change', () => onChange(s.value));
+  return s;
+}
+const SHAPE_ICON = {
+  lowshelf: '<svg viewBox="0 0 40 14"><path d="M2 4h12c6 0 8 6 14 6h10" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  peaking: '<svg viewBox="0 0 40 14"><path d="M2 11h10c4 0 5-8 8-8s4 8 8 8h10" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  highshelf: '<svg viewBox="0 0 40 14"><path d="M2 10h10c6 0 8-6 14-6h12" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+};
 FXUI.lim = (obj, ctx) => {
   const M = obj, L = M.lim;
-  const inM = el('canvas', { class: 'l3m' }), outM = el('canvas', { class: 'l3m' }), atM = el('canvas', { class: 'l3m at' });
-  const thr = vslider({ label: 'Threshold', min: -30, max: 0, value: L.thresh, def: -4, height: 220, fmt: (v) => v.toFixed(1), onInput: (v) => { L.thresh = v; ctx.change(); }, onChange: ctx.commit, cls: 'l3' });
-  const ceil = vslider({ label: 'Out Ceiling', min: -6, max: 0, value: L.ceiling, def: -1, height: 220, fmt: (v) => v.toFixed(1), onInput: (v) => { L.ceiling = v; ctx.change(); }, onChange: ctx.commit, cls: 'l3' });
-  const rel = dragNum({ value: L.release, min: 5, max: 1000, step: 1, log: true, fmt: (v) => Math.round(v) + ' ms', onInput: (v) => { L.release = v; ctx.change(); }, onChange: ctx.commit });
-  const arc = el('button', { class: 'l3btn' + (L.arc ? ' on' : ''), onclick: () => { L.arc = !L.arc; arc.classList.toggle('on', L.arc); ctx.change(); ctx.commit(); } }, 'ARC');
-  const auto = el('input', { type: 'checkbox', checked: M.autoRms });
-  auto.addEventListener('change', () => { M.autoRms = auto.checked; ctx.commit(); });
-  const fades = el('input', { type: 'checkbox', checked: M.fades });
-  fades.addEventListener('change', () => { M.fades = fades.checked; ctx.commit(); });
-  const tgt = dragNum({ value: M.targetRms, min: -18, max: -6, step: 0.1, fmt: (v) => v.toFixed(1) + ' dB', onInput: (v) => { M.targetRms = v; }, onChange: ctx.commit });
-  const ro = { rms: el('b', { class: 'mono' }, '—'), rmsi: el('b', { class: 'mono' }, '—'), pk: el('b', { class: 'mono' }, '—'), at: el('b', { class: 'mono' }, '—') };
+  const mc = () => el('canvas', { class: 'l3mtr' });
+  const inL = mc(), inR = mc(), outL = mc(), outR = mc(), at = el('canvas', { class: 'l3at' });
+  const H = 300;
+  const thr = l3fader({ value: L.thresh, min: -30, max: 0, height: H, fmt: (v) => v.toFixed(1), meters: [inL, inR], onInput: (v) => { L.thresh = Math.round(v * 10) / 10; ctx.change(); }, onChange: ctx.commit });
+  const ceil = l3fader({ value: L.ceiling, min: -30, max: 0, height: H, fmt: (v) => v.toFixed(1), meters: [outL, outR], onInput: (v) => { L.ceiling = Math.round(v * 10) / 10; ctx.change(); }, onChange: ctx.commit });
+  const rel = l3fader({ value: L.release, min: 0.01, max: 1000, log: true, height: H, fmt: (v) => (v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : Math.round(v)), onInput: (v) => { L.release = v; ctx.change(); }, onChange: ctx.commit });
+  const ro = [0, 1, 2, 3].map(() => el('span', { class: 'l3ro mono' }, '-Inf')); const roAt = el('span', { class: 'l3ro mono' }, '0.0');
+  const atScale = el('div', { class: 'l3scale' }, ...[0, 6, 12, 18, 24, 30].map((d) => el('span', { style: `top:${d / 30 * 100}%` }, d + ' –')));
+  const left = el('div', { class: 'l3left' },
+    el('div', { class: 'l3cols' },
+      el('div', { class: 'l3col' }, el('span', { class: 'l3cap' }, 'Threshold'), thr),
+      el('div', { class: 'l3col' }, el('span', { class: 'l3cap' }, 'Out Ceiling'), ceil),
+      el('div', { class: 'l3col' }, el('span', { class: 'l3cap' }, 'Atten'), el('div', { class: 'l3atwrap', style: `height:${H}px` }, atScale, at)),
+      el('div', { class: 'l3col' }, el('span', { class: 'l3cap' }, 'Release'), rel)),
+    el('div', { class: 'l3ros' }, ...ro, roAt),
+    el('div', { class: 'l3box2' },
+      el('div', {}, el('span', { class: 'l3cap' }, 'Release Character'), l3select([['Default', 'Default'], ['ARC', 'ARC'], ['Fast', 'Fast'], ['Smooth', 'Smooth']], L.character, (v) => { L.character = v; ctx.change(); ctx.commit(); })),
+      el('div', {}, el('span', { class: 'l3cap' }, 'Separation'), l3select([['Low', 'Low'], ['Medium', 'Medium'], ['High', 'High']], L.separation, (v) => { L.separation = v; ctx.commit(); }))),
+    el('div', { class: 'l3bottom' },
+      el('div', { class: 'l3box2 v' },
+        el('span', { class: 'l3cap' }, 'Quantize'), l3select([[24, '24 Bits'], [16, '16 Bits']], L.quantize, (v) => { L.quantize = +v; ctx.commit(); }),
+        el('span', { class: 'l3cap' }, 'Dither'), l3select([['Type1', 'Type1'], ['Type2', 'Type2'], ['None', 'None']], L.dither, (v) => { L.dither = v; ctx.commit(); }),
+        el('span', { class: 'l3cap' }, 'Shaping'), l3select([['Normal', 'Normal'], ['Moderate', 'Moderate'], ['None', 'None']], L.shaping, (v) => { L.shaping = v; ctx.commit(); })),
+      el('div', { class: 'l3logo' },
+        el('button', { class: 'l3idr' + (L.idr ? ' on' : ''), onclick: (e) => { L.idr = !L.idr; e.currentTarget.classList.toggle('on', L.idr); ctx.commit(); } }, 'IDR'),
+        el('div', { class: 'l3brand' }, el('b', {}, 'MULTI'), el('small', {}, 'MAXIMIZER · 6 BAND')))));
+  // band display
+  const disp = el('canvas', { class: 'l3disp' });
+  const cols = el('div', { class: 'l3bands' }, el('div', { class: 'l3lab' }, el('span', {}, 'Priority'), el('span', {}, 'Gain'), el('span', {}, 'Freq'), el('span', {}, 'Q')));
+  const FL = 16, FH = 20000, fx = (f, w) => Math.log(f / FL) / Math.log(FH / FL) * w, xf = (x, w) => FL * Math.pow(FH / FL, x / w);
+  let resp = null; const recalc = () => { resp = null; };
+  L.bands.forEach((b, i) => {
+    const box = (key, min, max, step, fmt, log, acc) => el('div', { class: 'l3num', style: acc ? `--acc:${acc}` : '' }, dragNum({ value: b[key], min, max, step, log, fmt, onInput: (v) => { b[key] = v; recalc(); ctx.change(); drawDisp(); }, onChange: ctx.commit }));
+    const shape = el('div', { class: 'l3shape' }, ...['lowshelf', 'peaking', 'highshelf'].map((t) => el('button', { class: b.type === t ? 'on' : '', html: SHAPE_ICON[t], title: t, onclick: (e) => { b.type = t; [...e.currentTarget.parentElement.children].forEach((x) => x.classList.toggle('on', x === e.currentTarget)); recalc(); ctx.change(); ctx.commit(); drawDisp(); } })));
+    const led = el('button', { class: 'l3led' + (b.on !== false ? ' on' : ''), 'aria-label': 'Вкл/выкл полосу', onclick: (e) => { b.on = b.on === false; e.currentTarget.classList.toggle('on', b.on !== false); recalc(); ctx.change(); ctx.commit(); drawDisp(); } });
+    cols.append(el('div', { class: 'l3band', style: `--bc:${L3_COLORS[i]}` },
+      box('prio', -12, 12, 0.1, (v) => v.toFixed(1), false, '#E8D22B'),
+      box('gain', -12, 12, 0.1, (v) => v.toFixed(1), false, '#3F7CF0'),
+      box('f', 20, 20000, 1, (v) => Math.round(v), true),
+      box('q', 0.1, 8, 0.01, (v) => v.toFixed(2), true),
+      shape, led));
+  });
+  const right = el('div', { class: 'l3right' }, el('div', { class: 'l3bezel' }, disp), cols);
   const root = el('div', { class: 'pl pl-l3' },
-    el('div', { class: 'l3head' }, el('b', {}, 'MAXIMIZER'), el('span', {}, 'true peak · auto release · 24-bit')),
-    el('div', { class: 'l3body' },
-      el('div', { class: 'l3pair' }, inM, thr), el('div', { class: 'l3pair' }, ceil, outM), el('div', { class: 'l3pair' }, el('div', { class: 'vslider' }, el('div', { class: 'vlab' }, 'Atten.'), atM, ro.at)),
-      el('div', { class: 'l3side' },
-        el('div', { class: 'l3box' }, el('small', {}, 'Release'), rel, arc),
-        el('div', { class: 'l3box' }, el('small', {}, 'Quantize / Dither'), el('span', { class: 'mono' }, '24 bit · TPDF')),
-        el('div', { class: 'l3box' }, el('small', {}, 'Экспорт'),
-          el('label', { class: 'tog' }, auto, el('span', {}, 'Подгонять RMS к')), tgt,
-          el('label', { class: 'tog' }, fades, el('span', {}, 'Фейды 50 мс на краях'))),
-        el('div', { class: 'l3box ro' }, el('small', {}, 'Сейчас'), el('span', {}, 'RMS 3с ', ro.rms), el('span', {}, 'RMS-I ', ro.rmsi), el('span', {}, 'Пик ', ro.pk)))),
-    el('p', { class: 'note' }, 'Threshold поднимает громкость, Out Ceiling — потолок по true peak. При экспорте с авто-RMS порог подбирается сам для каждого региона.'));
-  const lvl = { in: -60, gr: 0 };
-  const bar = (c, v01, color, fromTop) => { const [x, w, h] = canvas2d(c); x.fillStyle = '#20262c'; x.fillRect(0, 0, w, h); x.fillStyle = color; const k = Math.min(1, Math.max(0, v01)) * h; fromTop ? x.fillRect(2, 0, w - 4, k) : x.fillRect(2, h - k, w - 4, k); x.fillStyle = 'rgba(255,255,255,.18)'; for (let i = 1; i < 10; i++) x.fillRect(0, Math.round(h * i / 10), w, 1); };
+    el('div', { class: 'plhead l3top' }, powerBtn(L, ctx), el('b', {}, 'Multimaximizer'), el('span', { class: 'dim' }, 'Threshold −7, Out Ceiling −1, Release 1.00 · экспорт подбирает Threshold под целевой RMS')),
+    el('div', { class: 'l3main' }, left, right),
+    el('div', { class: 'l3exp' },
+      el('label', { class: 'tog' }, (() => { const c = el('input', { type: 'checkbox', checked: M.autoRms }); c.addEventListener('change', () => { M.autoRms = c.checked; ctx.commit(); }); return c; })(), el('span', {}, 'При экспорте подгонять RMS к')),
+      dragNum({ value: M.targetRms, min: -18, max: -6, step: 0.1, fmt: (v) => v.toFixed(1) + ' dB', onInput: (v) => { M.targetRms = v; }, onChange: ctx.commit }),
+      el('label', { class: 'tog' }, (() => { const c = el('input', { type: 'checkbox', checked: M.fades }); c.addEventListener('change', () => { M.fades = c.checked; ctx.commit(); }); return c; })(), el('span', {}, 'Фейды 50 мс')),
+      el('span', { class: 'dim' }, 'Gain полос поднимает или опускает частоты перед лимитером. Priority пока только сохраняется, на звук не влияет.')));
+  let drag = null;
+  const yOf = (db, h) => h / 2 - db / 18 * (h / 2 - 24);
+  function drawDisp() {
+    const [x, w, h] = canvas2d(disp);
+    const g = x.createLinearGradient(0, 0, w, h); g.addColorStop(0, '#2A2A2C'); g.addColorStop(0.35, '#121214'); g.addColorStop(1, '#0B0B0C');
+    x.fillStyle = g; x.fillRect(0, 0, w, h);
+    x.font = '11px ui-monospace, Menlo, monospace'; x.fillStyle = '#B9B9B9';
+    for (const d of [15, 12, 9, 6, 3, 0, -3, -6, -9, -12, -15, -18]) { const y = yOf(d, h); x.fillStyle = 'rgba(255,255,255,.05)'; x.fillRect(30, Math.round(y), w - 34, 1); x.fillStyle = '#B9B9B9'; x.fillText(String(Math.abs(d)), 6, y + 4); }
+    for (const f of [16, 31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]) { const px = 30 + fx(f, w - 34); x.fillStyle = 'rgba(255,255,255,.05)'; x.fillRect(Math.round(px), 10, 1, h - 30); x.fillStyle = '#B9B9B9'; x.fillText(f >= 1000 ? f / 1000 + 'k' : String(f), px - 8, h - 6); }
+    const N = 240;
+    if (!resp) { const fr = new Float32Array(N); for (let i = 0; i < N; i++) fr[i] = xf(i / (N - 1) * (w - 34), w - 34); resp = eqResponse(L.bands.map((b) => ({ ...b, g: b.gain, on: b.on !== false })), fr); resp.p = eqResponse(L.bands.map((b) => ({ ...b, g: b.prio, on: b.on !== false })), fr); }
+    for (const [arr, col] of [[resp.p.tot, 'rgba(232,210,43,.7)'], [resp.tot, '#3F6BFF']]) { x.strokeStyle = col; x.lineWidth = 1.6; x.beginPath(); for (let i = 0; i < N; i++) { const px = 30 + i / (N - 1) * (w - 34), py = yOf(clamp(arr[i], -18, 18), h); i ? x.lineTo(px, py) : x.moveTo(px, py); } x.stroke(); }
+    L.bands.forEach((b, i) => {
+      const px = 30 + fx(b.f, w - 34), py = yOf(b.gain, h);
+      x.save(); x.translate(px, py); x.rotate(Math.PI / 4); x.strokeStyle = L3_COLORS[i]; x.lineWidth = 2; x.fillStyle = b.on === false ? '#222' : 'rgba(0,0,0,.6)'; x.fillRect(-5, -5, 10, 10); x.strokeRect(-5, -5, 10, 10); x.restore();
+    });
+    x.lineWidth = 1;
+  }
+  disp.addEventListener('pointerdown', (e) => {
+    const r = disp.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+    let best = -1, bd = isTouch ? 26 : 14;
+    L.bands.forEach((b, i) => { const d = Math.hypot(30 + fx(b.f, r.width - 34) - px, yOf(b.gain, r.height) - py); if (d < bd) { bd = d; best = i; } });
+    if (best < 0) return; drag = { i: best, w: r.width, h: r.height }; disp.setPointerCapture(e.pointerId);
+  });
+  disp.addEventListener('pointermove', (e) => {
+    if (!drag) return; const r = disp.getBoundingClientRect(), b = L.bands[drag.i];
+    b.f = Math.round(clamp(xf(clamp(e.clientX - r.left - 30, 0, drag.w - 34), drag.w - 34), 20, 20000));
+    b.gain = Math.round(clamp((drag.h / 2 - (e.clientY - r.top)) / (drag.h / 2 - 24) * 18, -12, 12) * 10) / 10;
+    recalc(); ctx.change(); drawDisp();
+  });
+  disp.addEventListener('pointerup', () => { if (drag) { drag = null; ctx.commit(); openFx(ctx.target, ctx.key); } });
+  requestAnimationFrame(drawDisp);
+  const hold = [-120, -120, -120, -120];
+  const bar = (c, v01, color, fromTop) => { const [x, w, h] = canvas2d(c); x.fillStyle = '#050505'; x.fillRect(0, 0, w, h); x.fillStyle = color; const k = clamp(v01, 0, 1) * h; fromTop ? x.fillRect(1, 0, w - 2, k) : x.fillRect(1, h - k, w - 2, k); };
+  let gr = 0;
   return { el: root, tick: () => {
-    const gr = S.playing ? Meter.limGr() : 0; lvl.gr += (gr - lvl.gr) * 0.4;
-    const out = S.playing ? linToDb(Math.max(Meter.pkL, Meter.pkR)) : -90;
-    bar(inM, (out + lvl.gr - L.thresh + 40) / 40, '#7FB6E6', false);
-    bar(outM, (out + 40) / 40, '#6BD08A', false);
-    bar(atM, lvl.gr / 24, '#E5534B', true);
-    ro.at.textContent = S.playing ? '−' + lvl.gr.toFixed(1) : '—';
-    ro.rms.textContent = S.playing ? fmtDb(Meter.rmsShort()) : '—'; ro.rmsi.textContent = S.playing ? fmtDb(Meter.rmsInt()) : '—'; ro.pk.textContent = S.playing && Meter.maxPk > -99 ? fmtDb(Meter.maxPk) : '—';
+    const g = S.playing ? Meter.limGr() : 0; gr += (g - gr) * 0.4;
+    const pl = S.playing ? linToDb(Meter.pkL) : -120, pr = S.playing ? linToDb(Meter.pkR) : -120;
+    const il = pl + gr + L.thresh, ir = pr + gr + L.thresh; // level before the threshold gain
+    const sc = (d) => (d + 30) / 30;
+    bar(inL, sc(il), '#4FA3E8', false); bar(inR, sc(ir), '#4FA3E8', false);
+    bar(outL, sc(pl), '#5ED16E', false); bar(outR, sc(pr), '#5ED16E', false);
+    bar(at, gr / 30, '#E04A3A', true);
+    [il, ir, pl, pr].forEach((d, i) => { hold[i] = Math.max(hold[i], d); ro[i].textContent = hold[i] < -99 ? '-Inf' : hold[i].toFixed(1); });
+    roAt.textContent = gr.toFixed(1);
+    if (!S.playing) hold.fill(-120);
   } };
 };
 

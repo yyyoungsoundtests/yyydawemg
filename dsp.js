@@ -191,7 +191,7 @@ class EfirLimiter extends AudioWorkletProcessor {
     this.qv = new Float32Array(this.SZ); this.qi = new Float64Array(this.SZ); this.qh = 0; this.qt = 0; this.n = 0;
     this.ring = new Float32Array(this.LA).fill(1); this.rp = 0; this.sum = this.LA;
     this.e = 1; this.minEnv = 1; this.cntr = 0;
-    this.p = Object.assign({ gain: 0, ceiling: -1, release: 80, arc: true }, options && options.processorOptions && options.processorOptions.p);
+    this.p = Object.assign({ on: true, gain: 0, ceiling: -1, release: 80, arc: true }, options && options.processorOptions && options.processorOptions.p);
     this.slow = 0;
     this.coefs();
     this.port.onmessage = (e) => { Object.assign(this.p, e.data); this.coefs(); };
@@ -216,6 +216,12 @@ class EfirLimiter extends AudioWorkletProcessor {
       this.rel = 1 - Math.exp(-1 / (ms / 1000 * sampleRate));
     }
     for (let i = 0; i < oL.length; i++) {
+      if (this.p.on === false) {
+        this.dl[0][this.wi] = iL ? iL[i] : 0; this.dl[1][this.wi] = iR ? iR[i] : 0;
+        const ri = (this.wi - this.D + SZ) % SZ;
+        oL[i] = this.dl[0][ri]; if (oR !== oL) oR[i] = this.dl[1][ri];
+        this.wi = (this.wi + 1) % SZ; continue;
+      }
       const x0 = iL ? iL[i] * this.g : 0, x1 = iR ? iR[i] * this.g : 0;
       this.dl[0][this.wi] = x0; this.dl[1][this.wi] = x1;
       let pk = 0;
@@ -515,3 +521,47 @@ class EfirSH extends AudioWorkletProcessor {
   }
 }
 registerProcessor('efir-sh', EfirSH);
+
+// ---------- Opto leveler in the style of a classic tube optical compressor. No latency ----------
+// Peak Reduction drives the sidechain, Gain is output make-up, Compress ≈ 3:1, Limit ≈ 20:1.
+// Optical cell: ~10 ms attack, two-stage release (fast ~60 ms, then slow 0.5–5 s depending on how long it worked).
+class EfirLA2A extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.p = Object.assign({ on: true, peak: 40, gain: 50, limit: false }, o && o.processorOptions && o.processorOptions.p);
+    this.pw = 0; this.fast = 0; this.slow = 0; this.hist = 0; this.cnt = 0; this.mx = 0; this.out = 0; this.hp = [0, 0];
+    this.aRms = tc(4); this.aA = tc(10); this.aF = tc(60); this.sA = tc(400);
+    this.port.onmessage = (e) => Object.assign(this.p, e.data);
+  }
+  process(inputs, outputs) {
+    if (this.p.dead) return false;
+    const inp = inputs[0] || [], out = outputs[0], p = this.p;
+    const iL = inp[0], iR = inp[1] || inp[0], oL = out[0], oR = out[1] || out[0];
+    const drive = p.peak * 0.42, ratio = p.limit ? 20 : 3, mk = dbLin((p.gain - 40) * 0.45);
+    // release of the slow stage grows with how long the cell has been lit (memory effect)
+    const sR = tc(500 + 4500 * Math.min(1, this.hist / 10));
+    for (let i = 0; i < oL.length; i++) {
+      let l = iL ? iL[i] : 0, r = iR ? iR[i] : 0;
+      if (p.on) {
+        // sidechain with gentle high-frequency emphasis
+        const m = 0.5 * (l + r), hpv = m - this.hp[0]; this.hp[0] += hpv * 0.06;
+        const sc = m + 0.6 * hpv;
+        this.pw += (sc * sc - this.pw) * this.aRms;
+        const lvl = 10 * Math.log10(this.pw + 1e-12) + drive - 18;
+        const t = knee(lvl, ratio, 10);
+        this.fast += (t - this.fast) * (t > this.fast ? this.aA : this.aF);
+        this.slow += (t * 0.6 - this.slow) * (t * 0.6 > this.slow ? this.sA : sR);
+        const gr = Math.max(this.fast, this.slow);
+        if (gr > this.mx) this.mx = gr;
+        const g = dbLin(-gr) * mk;
+        l = Math.tanh(l * g * 0.9) / 0.9; r = Math.tanh(r * g * 0.9) / 0.9; // soft tube-ish top
+        const a = Math.max(Math.abs(l), Math.abs(r)); if (a > this.out) this.out = a;
+      }
+      oL[i] = l; if (oR !== oL) oR[i] = r;
+    }
+    this.hist += ((this.mx > 3 ? 1 : 0) * 10 - this.hist) * 0.002;
+    if (++this.cnt % 8 === 0) { this.port.postMessage({ gr: this.mx, out: linDb(this.out) }); this.mx = 0; this.out = 0; }
+    return true;
+  }
+}
+registerProcessor('efir-la2a', EfirLA2A);
