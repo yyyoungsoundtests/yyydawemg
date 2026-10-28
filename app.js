@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.11.3';
+const APP_VERSION = '0.11.4';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -237,9 +237,25 @@ function restore(i) {
 const undo = () => restore(S.hidx - 1);
 const redo = () => restore(S.hidx + 1);
 
+// Saving: every change goes at once to a quick backup copy (localStorage, written synchronously, so it
+// survives iPad suspending or killing the app) and, a moment later, to the main storage (IndexedDB).
+function backupNow() {
+  try { P.updated = Date.now(); localStorage.setItem('efir.backup', JSON.stringify({ id: P.id, updated: P.updated, p: P })); ls.set('last', P.id); } catch (e) { console.warn(e); }
+}
+async function saveNow() {
+  clearTimeout(S.saveTimer); S.saveTimer = null;
+  backupNow();
+  try { await Store.put('projects', P.id, JSON.parse(JSON.stringify(P))); return true; } catch (e) { console.warn(e); return false; }
+}
 function scheduleSave() {
+  backupNow();
   clearTimeout(S.saveTimer);
-  S.saveTimer = setTimeout(async () => { P.updated = Date.now(); try { await Store.put('projects', P.id, JSON.parse(JSON.stringify(P))); ls.set('last', P.id); } catch (e) { console.warn(e); } }, 600);
+  S.saveTimer = setTimeout(saveNow, 150);
+}
+async function saveClick() {
+  const ok = await saveNow();
+  toast(ok ? 'Сохранено' : 'Не получилось сохранить в хранилище — есть запасная копия', ok ? 1200 : 4000);
+  const b = $('#bSave'); if (b) { b.classList.add('saved'); setTimeout(() => b.classList.remove('saved'), 1500); }
 }
 
 /* ================= Audio files ================= */
@@ -2208,7 +2224,6 @@ async function openProjects() {
   body.append(el('p', { class: 'note' }, `Эфир ${APP_VERSION}. Проекты и аудио хранятся только на этом устройстве. Для переноса или резервной копии сохраняй файл проекта.`));
   modal('Проекты', body);
 }
-async function saveNow() { clearTimeout(S.saveTimer); P.updated = Date.now(); await Store.put('projects', P.id, JSON.parse(JSON.stringify(P))); }
 // Project file: "EFIR1" + u32 json length + json + raw blobs in order
 async function exportProjectFile() {
   await saveNow();
@@ -2281,6 +2296,7 @@ function bindUI() {
     if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
     else if (mod && e.code === 'KeyZ') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     else if (mod && e.code === 'KeyY') { e.preventDefault(); redo(); }
+    else if (mod && e.code === 'KeyS') { e.preventDefault(); saveClick(); }
     else if (mod && e.code === 'KeyD') { e.preventDefault(); duplicateSel(); }
     else if (mod && e.code === 'KeyC') { e.preventDefault(); copySel(); }
     else if (mod && e.code === 'KeyX') { e.preventDefault(); cutSel(); }
@@ -2303,7 +2319,17 @@ async function boot() {
   try { await Store.open(); } catch (e) { toast('Хранилище браузера недоступно: проекты не сохранятся', 5000); }
   let p = null;
   try { const last = ls.get('last'); if (last) p = await Store.get('projects', last); } catch {}
+  // the quick backup can be newer than the main copy if the app was closed right after an edit
+  try {
+    const bk = JSON.parse(localStorage.getItem('efir.backup') || 'null');
+    if (bk && bk.p && bk.id === (p ? p.id : ls.get('last')) && (!p || (bk.updated || 0) > (p.updated || 0))) p = bk.p;
+  } catch {}
   await loadProject(p || newProject());
+  // flush when the app goes to the background (iPad may freeze or close it right after)
+  const flush = () => { if (P) { backupNow(); saveNow(); } };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
+  window.addEventListener('pagehide', flush);
+  $('#bSave').onclick = saveClick;
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
   // a home-screen app on iPad can stay open for days: when it comes back, check whether a newer version is online
   let lastCheck = 0;
