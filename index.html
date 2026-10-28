@@ -52,12 +52,16 @@ button { cursor: pointer; }
 .spacer { flex: 1; }
 
 /* main area */
-.main { display: grid; grid-template-columns: 216px minmax(0, 1fr) 176px; min-height: 0; }
+.main { display: grid; grid-template-columns: 216px minmax(0, 1fr); min-height: 0; }
 #heads { background: var(--tcp2); border-right: 1px solid var(--line); overflow: hidden; }
 .tcpTop { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 0; background: #2A2C2D; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px; }
 .tcpTop span { font-weight: 600; color: var(--fg); }
 .tcp { display: grid; grid-template-columns: 20px 1fr 28px; border-bottom: 1px solid var(--line); background: var(--tcp); box-shadow: inset 3px 0 0 var(--tc); }
 .tcp.muted { background: #343536; }
+.tcp.master { background: #2E3032; box-shadow: inset 3px 0 0 #E8E4DA; border-top: 2px solid #121314; }
+.tcp.master .tnum { color: #E8E4DA; font-weight: 700; }
+.tcp.master .tname { letter-spacing: .08em; }
+.mmtr { flex: 1; min-width: 0; height: 14px; display: block; }
 .tcp.muted .tname { opacity: .5; }
 .tnum { display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 11px; background: rgba(0,0,0,.12); }
 .tmain { display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 5px 6px; min-width: 0; }
@@ -107,7 +111,7 @@ button { cursor: pointer; }
 .dotfx { width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .dotfx::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--fxon); }
 .mmeter { flex: 1; min-height: 120px; padding: 8px 10px; display: flex; }
-#meterM { width: 100%; height: 100%; }
+
 
 /* context bar */
 .ctxbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 6px 10px; background: var(--bar2); border-top: 1px solid var(--line); min-height: 44px; }
@@ -502,8 +506,6 @@ button { cursor: pointer; }
 /* responsive */
 @media (max-width: 1000px) {
   .main { grid-template-columns: 190px minmax(0, 1fr); }
-  #mstrip { display: none; }
-  #bMaster { display: inline-flex; }
 }
 @media (max-width: 760px) {
   .main { grid-template-columns: 126px minmax(0, 1fr); }
@@ -513,7 +515,8 @@ button { cursor: pointer; }
   .tname { font-size: 11.5px; padding: 3px 4px; flex-basis: 100%; }
   .tmain > .trow:first-child { flex-wrap: wrap; }
   .fxb { width: 28px; } .addb { width: 24px; }
-  .trow.sub .ptxt { display: none; }
+  .trow.sub { display: none; }
+  .tcp.master .trow.sub { display: flex; }
   .tcpTop small { display: none; }
   .hide-s { display: none !important; }
   #meterT { width: 80px; }
@@ -551,7 +554,6 @@ button { cursor: pointer; }
     <button class="tb" id="bFit" title="Показать всё">Всё</button>
     <button class="tb" id="bZin" aria-label="Приблизить">+</button>
     <div class="spacer"></div>
-    <button class="tb" id="bMaster">Мастер FX</button>
     <button class="tb" id="bPresets">Пресеты</button>
     <button class="tb" id="bConvert">→ MP3</button>
     <button class="tb" id="bRao">РАО</button>
@@ -560,11 +562,6 @@ button { cursor: pointer; }
   <div class="main">
     <div id="heads"></div>
     <div id="tlwrap"><canvas id="tl" aria-label="Таймлайн"></canvas></div>
-    <aside id="mstrip">
-      <button id="mtitle">MASTER · FX</button>
-      <div id="mfx"></div>
-      <div class="mmeter"><canvas id="meterM" aria-label="Выход мастера"></canvas></div>
-    </aside>
   </div>
   <div id="ctx" class="ctxbar"></div>
   <footer class="transport">
@@ -586,8 +583,8 @@ button { cursor: pointer; }
   </footer>
 </div>
 <div id="toast" hidden></div>
-<script src="stretch.js?v=0.7.0"></script>
-<script src="fx.js?v=0.7.0"></script>
-<script src="app.js?v=0.7.0"></script>
+<script src="stretch.js?v=0.8.0"></script>
+<script src="fx.js?v=0.8.0"></script>
+<script src="app.js?v=0.8.0"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.8.0';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -662,6 +662,8 @@ function updateMeterText() {
   set('mRms', S.playing ? fmtDb(Meter.rmsShort()) : '—');
   set('mRmsI', S.playing ? fmtDb(Meter.rmsInt()) : '—');
   set('mPk', S.playing && Meter.hold > -99 ? fmtDb(Meter.hold) : '—');
+  set('mRmsM', S.playing ? fmtDb(Meter.rmsShort()) : '—');
+  set('mPkM', S.playing && Meter.hold > -99 ? fmtDb(Meter.hold) : '—');
   set('mGr', S.playing ? '−' + Meter.limGr().toFixed(1) : '—');
   const d = Meter.gr['mu.duck'], dg = document.getElementById('duckGr');
   if (dg) dg.style.width = S.playing && d ? clamp(d.gr / 18, 0, 1) * 100 + '%' : '0%';
@@ -684,7 +686,7 @@ function resize() {
   if (!P) return;
   const wrap = $('#tlwrap');
   W = wrap.clientWidth; Hh = wrap.clientHeight;
-  laneH = Math.max(60, Math.floor((Hh - TOP) / P.tracks.length));
+  laneH = Math.max(56, Math.floor((Hh - TOP) / (P.tracks.length + 1)));
   const dpr = devicePixelRatio || 1;
   cv.width = Math.round(W * dpr); cv.height = Math.round(Hh * dpr);
   cv.style.width = W + 'px'; cv.style.height = Hh + 'px';
@@ -708,7 +710,7 @@ function frame() {
     }
   }
   const tm = $('#time'); if (tm) tm.textContent = fmtTime(S.playing ? t : P.playhead);
-  drawBarMeter($('#meterT'), false); drawBarMeter($('#meterM'), true); updateMeterText();
+  drawBarMeter($('#meterT'), false); drawBarMeter($('#meterM'), false); updateMeterText();
   if (S.dirty) { draw(); S.dirty = false; }
   if (S.playing) S.raf = requestAnimationFrame(frame);
 }
@@ -725,6 +727,10 @@ function draw() {
   const x = cx;
   x.fillStyle = C.arr; x.fillRect(0, 0, W, Hh);
   P.tracks.forEach((t, i) => { x.fillStyle = i % 2 ? C.lane2 : C.lane; x.fillRect(0, laneY(i), W, laneH); x.fillStyle = 'rgba(0,0,0,.35)'; x.fillRect(0, laneY(i) + laneH - 1, W, 1); });
+  { // master lane: no clips, just a quiet strip under the tracks
+    const y = laneY(P.tracks.length); x.fillStyle = '#26282A'; x.fillRect(0, y, W, Hh - y); x.fillStyle = '#121314'; x.fillRect(0, y, W, 2);
+    x.fillStyle = 'rgba(255,255,255,.08)'; x.font = '700 22px -apple-system, system-ui, sans-serif'; x.textBaseline = 'middle'; x.fillText('MASTER', 14, y + laneH / 2);
+  }
   // ruler
   x.fillStyle = C.ruler; x.fillRect(0, 0, W, RULER_H);
   x.fillStyle = C.regLane; x.fillRect(0, RULER_H, W, REG_H);
@@ -1490,7 +1496,6 @@ function renderTCP() {
     vol.addEventListener('input', () => { t.vol = +vol.value; volTxt.textContent = fmtDb(t.vol) + 'dB'; applyLive(); });
     vol.addEventListener('change', commit);
     vol.addEventListener('dblclick', () => { t.vol = 0; vol.value = 0; volTxt.textContent = fmtDb(0) + 'dB'; applyLive(); commit(); });
-    const pan = knob({ value: t.pan || 0, min: -1, max: 1, def: 0, size: 22, cls: 'k-tcp', bipolar: true, fmt: (v) => (Math.abs(v) < 0.01 ? 'center' : v < 0 ? Math.round(-v * 100) + '%L' : Math.round(v * 100) + '%R'), onInput: (v) => { t.pan = v; applyLive(); }, onChange: commit, title: 'Панорама' });
     const row = el('div', { class: 'tcp' + (t.mute || (anySolo && !t.solo) ? ' muted' : ''), style: `height:${laneH}px;--tc:${TRACK_COLORS[t.id]}` },
       el('div', { class: 'tnum' }, String(i + 1)),
       el('div', { class: 'tmain' },
@@ -1498,18 +1503,30 @@ function renderTCP() {
           el('button', { class: 'tname', onclick: () => openFx(t.id) }, t.name),
           el('button', { class: 'fxb' + (active ? ' act' : ''), onclick: () => openFx(t.id), title: 'Цепочка обработки' }, 'FX'),
           el('button', { class: 'addb', onclick: () => fileIn.click(), 'aria-label': 'Добавить файл на дорожку' }, '+'), fileIn),
-        el('div', { class: 'trow' }, vol, pan),
-        el('div', { class: 'trow sub' }, volTxt, el('span', { class: 'ptxt mono' }, pan.fmtNow()),
+        el('div', { class: 'trow' }, vol),
+        el('div', { class: 'trow sub' }, volTxt,
           t.kind === 'music' ? el('span', { class: 'grbar', title: 'Подавление музыки голосом' }, el('i', { id: 'duckGr' })) : null)),
       el('div', { class: 'tms' },
         el('button', { class: 'ms' + (t.mute ? ' m' : ''), onclick: () => { t.mute = !t.mute; commit(); applyLive(); renderTCP(); }, 'aria-label': 'Mute' }, 'M'),
         el('button', { class: 'ms' + (t.solo ? ' s' : ''), onclick: () => { t.solo = !t.solo; commit(); applyLive(); renderTCP(); }, 'aria-label': 'Solo' }, 'S')));
-    pan.onFmt = (txt) => { const p = row.querySelector('.ptxt'); if (p) p.textContent = txt; };
     h.append(row);
   });
-  renderMasterStrip();
+  // master as its own track row: FX chain + output meter
+  const mActive = chainFor('master').some((k) => k !== 'stats' && fxOn(P.master, k));
+  h.append(el('div', { class: 'tcp master', style: `height:${Math.max(56, Hh - TOP - laneH * P.tracks.length)}px` },
+    el('div', { class: 'tnum' }, 'M'),
+    el('div', { class: 'tmain' },
+      el('div', { class: 'trow' },
+        el('button', { class: 'tname', onclick: () => openFx('master') }, 'MASTER'),
+        el('button', { class: 'fxb' + (mActive ? ' act' : ''), onclick: () => openFx('master'), title: 'Мастер-цепочка' }, 'FX')),
+      el('div', { class: 'trow' }, el('canvas', { id: 'meterM', class: 'mmtr', 'aria-label': 'Выход мастера' })),
+      el('div', { class: 'trow sub' }, el('span', { class: 'mono' }, 'RMS ', el('b', { id: 'mRmsM' }, '—')), el('span', { class: 'mono' }, 'Пик ', el('b', { id: 'mPkM' }, '—')))),
+    el('div', { class: 'tms' })));
+  redraw();
 }
 function renderMasterStrip() {
+  const fx = document.querySelector('.tcp.master .fxb');
+  if (fx) fx.classList.toggle('act', chainFor('master').some((k) => k !== 'stats' && fxOn(P.master, k)));
   const box = $('#mfx'); if (!box) return;
   box.innerHTML = '';
   for (const k of chainFor('master')) {
@@ -1927,8 +1944,8 @@ function bindUI() {
   $('#bStretch').onclick = () => { S.tool = S.tool === 'stretch' ? 'edit' : 'stretch'; updateToolbar(); renderBar(); toast(S.tool === 'stretch' ? 'Растяжение: тяни клип за край — длина меняется вместе со скоростью' : 'Обычный монтаж', 2600); };
   $('#bMulti').onclick = () => { S.multi = !S.multi; updateToolbar(); toast(S.multi ? 'Мультивыбор: тапай клипы по очереди, потом «Склеить»' : 'Мультивыбор выключен', 2600); };
   $('#bPresets').onclick = openPresets; $('#bConvert').onclick = openConverter; $('#bLoop').onclick = toggleLoop;
-  $('#bMaster').onclick = () => openFx('master');
-  $('#mtitle').onclick = () => openFx('master');
+
+
   document.addEventListener('keydown', (e) => {
     if (e.target.matches('input[type=text], input[type=number], textarea, select')) return;
     const mod = e.metaKey || e.ctrlKey;
