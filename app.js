@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.11.0';
+const APP_VERSION = '0.11.1';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -2023,7 +2023,7 @@ async function openExport() {
     const nm = el('input', { type: 'text', class: 'txt regname', value: r.name, autocomplete: 'off', 'aria-label': 'Название региона' });
     nm.addEventListener('input', () => { const v = nm.value.trim(); if (v) { r.name = v; scheduleSave(); redraw(); hint(); } });
     nm.addEventListener('change', () => { if (!nm.value.trim()) nm.value = r.name; commit(); });
-    return el('div', { class: 'tog regrow' }, el('input', { type: 'checkbox', checked: true, 'data-id': r.id }), nm, el('small', { class: 'mono' }, `${r.len} с`));
+    return el('div', { class: 'tog regrow' }, el('input', { type: 'checkbox', 'data-id': r.id }), nm, el('small', { class: 'mono' }, `${r.len} с`));
   });
   const fmtSel = el('div', { class: 'seg' },
     ...[['wav', `WAV 48 кГц / ${P.master.lim.quantize === 16 ? 16 : 24} бит`], ['mp3', 'MP3 320']].map(([v, t]) => el('label', {}, el('input', { type: 'radio', name: 'fmt', value: v, checked: M.format === v }), el('span', {}, t))));
