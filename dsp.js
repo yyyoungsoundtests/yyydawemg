@@ -727,3 +727,84 @@ class EfirTonal extends AudioWorkletProcessor {
   }
 }
 registerProcessor('efir-tonal', EfirTonal);
+
+// ---------- R-Compressor style: clean feed-forward compressor with ARC, Electro and Warm modes. No latency ----------
+// ARC — release adapts to the material; Electro — release speeds up at small gain reduction (more natural on voice);
+// Warm — softer, wider knee (no added harmonics: everything stays clean).
+class EfirRComp extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.p = Object.assign({ on: true, thresh: 0, ratio: 4.01, attack: 5.02, release: 50.2, gain: 0, mix: 100, trim: 0, arc: true, electro: true, warm: true }, o && o.processorOptions && o.processorOptions.p);
+    this.pw = 0; this.gr = 0; this.slow = 0; this.cnt = 0; this.mx = 0; this.pin = 0; this.pout = 0;
+    this.aR = tc(1);
+    this.port.onmessage = (e) => Object.assign(this.p, e.data);
+  }
+  process(inputs, outputs) {
+    if (this.p.dead) return false;
+    const inp = inputs[0] || [], out = outputs[0], p = this.p;
+    const iL = inp[0], iR = inp[1] || inp[0], oL = out[0], oR = out[1] || out[0];
+    const aA = tc(Math.max(0.05, p.attack)), knW = p.warm ? 10 : 3, ratio = Math.max(1, p.ratio);
+    const makeup = dbLin(p.gain + p.trim), mix = Math.min(1, Math.max(0, p.mix / 100));
+    // release for this block: ARC lengthens it when compression has been going on for a while
+    let rel = Math.max(5, p.release);
+    if (p.arc) rel *= 0.7 + Math.min(1.6, this.slow / 6);
+    const aRelBase = tc(rel), aRelFast = tc(rel * 0.45);
+    for (let i = 0; i < oL.length; i++) {
+      const l = iL ? iL[i] : 0, r = iR ? iR[i] : 0;
+      if (!p.on) { oL[i] = l; if (oR !== oL) oR[i] = r; continue; }
+      this.pw += (0.5 * (l * l + r * r) - this.pw) * this.aR;
+      const pk = Math.max(Math.abs(l), Math.abs(r));
+      const lvl = Math.max(10 * Math.log10(this.pw + 1e-12) + 3, 20 * Math.log10(pk + 1e-9) - 3);
+      const t = knee(lvl - p.thresh, ratio, knW);
+      const aRel = p.electro && this.gr < 3 ? aRelFast : aRelBase;
+      this.gr += (t - this.gr) * (t > this.gr ? aA : aRel);
+      const g = dbLin(-this.gr) * makeup;
+      oL[i] = l * (1 - mix) + l * g * mix; if (oR !== oL) oR[i] = r * (1 - mix) + r * g * mix;
+      if (this.gr > this.mx) this.mx = this.gr;
+      if (pk > this.pin) this.pin = pk;
+      const po = Math.max(Math.abs(oL[i]), Math.abs(oR[i])); if (po > this.pout) this.pout = po;
+    }
+    this.slow += (this.mx - this.slow) * 0.01;
+    if (++this.cnt % 8 === 0) { this.port.postMessage({ gr: this.mx, inp: linDb(this.pin), out: linDb(this.pout) }); this.mx = 0; this.pin = 0; this.pout = 0; }
+    return true;
+  }
+}
+registerProcessor('efir-rcomp', EfirRComp);
+
+// ---------- Bus compressor for the master: clean VCA glue, stereo-linked, sidechain high-pass so bass doesn't pump ----------
+class EfirBusComp extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.p = Object.assign({ on: true, thresh: -14, ratio: 2, attack: 10, release: 0.3, auto: true, makeup: 0, mix: 100, schp: 90 }, o && o.processorOptions && o.processorOptions.p);
+    this.hp = [new BQ(), new BQ()]; this.pw = 0; this.gr = 0; this.g2 = 0; this.cnt = 0; this.mx = 0;
+    this.coefs();
+    this.port.onmessage = (e) => { Object.assign(this.p, e.data); this.coefs(); };
+  }
+  coefs() { for (const h of this.hp) h.set('hp', Math.max(20, this.p.schp)); this.aRms = tc(5); }
+  process(inputs, outputs) {
+    if (this.p.dead) return false;
+    const inp = inputs[0] || [], out = outputs[0], p = this.p;
+    const iL = inp[0], iR = inp[1] || inp[0], oL = out[0], oR = out[1] || out[0];
+    const aA = tc(Math.max(0.1, p.attack)), aR = tc(p.release * 1000), aRf = tc(100), aRs = tc(1200);
+    const mk = dbLin(p.makeup), mix = Math.min(1, Math.max(0, p.mix / 100));
+    for (let i = 0; i < oL.length; i++) {
+      const l = iL ? iL[i] : 0, r = iR ? iR[i] : 0;
+      if (!p.on) { oL[i] = l; if (oR !== oL) oR[i] = r; continue; }
+      const sl = this.hp[0].run(l), sr = this.hp[1].run(r);
+      this.pw += (0.5 * (sl * sl + sr * sr) - this.pw) * this.aRms;
+      const t = knee(10 * Math.log10(this.pw + 1e-12) + 3 - p.thresh, p.ratio, 6);
+      let gr;
+      if (p.auto) { // auto release: fast stage for transients, slow stage for sustained level
+        this.gr += (t - this.gr) * (t > this.gr ? aA : aRf);
+        this.g2 += (t * 0.7 - this.g2) * (t * 0.7 > this.g2 ? tc(Math.max(30, p.attack * 6)) : aRs);
+        gr = Math.max(this.gr, this.g2);
+      } else { this.gr += (t - this.gr) * (t > this.gr ? aA : aR); gr = this.gr; }
+      if (gr > this.mx) this.mx = gr;
+      const g = dbLin(-gr) * mk;
+      oL[i] = l * (1 - mix) + l * g * mix; if (oR !== oL) oR[i] = r * (1 - mix) + r * g * mix;
+    }
+    if (++this.cnt % 8 === 0) { this.port.postMessage({ gr: this.mx }); this.mx = 0; }
+    return true;
+  }
+}
+registerProcessor('efir-buscomp', EfirBusComp);

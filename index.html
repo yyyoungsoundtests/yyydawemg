@@ -457,6 +457,42 @@ button { cursor: pointer; }
 .k-snd .kg0 { stop-color: #3F5F62; } .k-snd .kg1 { stop-color: #0E1D1F; } .k-snd .karc { stroke: #5ED6BE; } .k-snd .ktrack { stroke: rgba(94,214,190,.15); }
 .k-snd.big .karc { stroke: #FFD65A; }
 
+/* R-Compressor */
+.pl-rc { background: #1B1E26; }
+.rcface { background: linear-gradient(#24324F, #15203A); border: 6px solid #9EA3AA; border-radius: 8px; padding: 14px 18px; box-shadow: inset 0 0 0 2px #0A0F1C, 0 4px 14px rgba(0,0,0,.6); color: #E8ECF4; }
+.rctop { display: flex; align-items: center; gap: 26px; flex-wrap: wrap; }
+.rclamp { display: flex; align-items: center; gap: 8px; background: none; border: 0; font: 400 15px var(--f-ui); color: #E8ECF4; }
+.rclamp i { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #3A3F48; background: radial-gradient(circle at 40% 35%, #5C5326, #241F0A); }
+.rclamp.on i { background: radial-gradient(circle at 40% 35%, #FFF3A6, #E8C33A 50%, #8A6A0C); box-shadow: 0 0 10px rgba(232,195,58,.7); }
+.rcmt { margin-left: auto; display: flex; flex-direction: column; gap: 6px; }
+.rcbox { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 13px; }
+.rcmt .rcbox { flex-direction: row; gap: 8px; }
+.rcbox .dnum { min-width: 4.6em; text-align: center; background: #05080F; border: 1px solid #5E6670; border-radius: 2px; color: #fff; padding: 2px 6px; }
+.rcmain { display: grid; grid-template-columns: 90px 1fr 90px; gap: 16px; margin-top: 14px; }
+.rcside { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.rcside small, .rccenter small { color: #C9D0DC; font-size: 12px; }
+.rcmeters { position: relative; height: 380px; display: flex; gap: 18px; justify-content: center; width: 100%; }
+.rcm { width: 8px; height: 100%; display: block; border-left: 1px solid #C9302A; border-right: 1px solid #C9302A; }
+.rcmark { position: absolute; left: 50%; transform: translate(10px, -50%); z-index: 2; }
+.rcmark.r { left: auto; right: 50%; transform: translate(-10px, -50%); }
+.rccenter { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.rcar { display: flex; flex-direction: column; gap: 10px; align-items: center; width: 100%; }
+.rcar .rcbox { width: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.25) 20%, rgba(255,255,255,.25) 80%, transparent) no-repeat center 70% / 100% 1px; }
+.rcatwrap { position: relative; width: 100px; height: 300px; }
+.rcat { width: 100px; height: 300px; border: 1px solid #3A4A7A; display: block; }
+.rcmark.c { left: 0; top: 52%; transform: translate(-110%, -50%); }
+
+/* Bus compressor */
+.pl-gl { background: #1C1D1F; }
+.glface { background: linear-gradient(#3A3C40, #26282B); border: 1px solid #0E0F10; border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 14px; align-items: center; }
+.glvu { width: min(340px, 100%); }
+.vu.gl { width: 100%; }
+.glknobs { display: flex; flex-wrap: wrap; gap: 14px 18px; justify-content: center; align-items: flex-end; }
+.k-glue .kg0 { stop-color: #8C9196; } .k-glue .kg1 { stop-color: #2E3134; } .k-glue .karc { stroke: #E2473A; } .k-glue .lab text { fill: #CFCFCF; }
+.glbtn { border: 1px solid #0E0F10; background: #2E3134; color: #9AA0A6; border-radius: 4px; padding: 7px 14px; font: 700 11px var(--f-ui); letter-spacing: .1em; }
+.glbtn.on { background: #E2473A; color: #fff; }
+@media (max-width: 760px) { .rcmain { grid-template-columns: 60px 1fr 60px; } .rcmeters { height: 260px; } .rcatwrap, .rcat { height: 220px; } .rcmark.c { position: static; transform: none; } }
+
 /* Stats */
 .pl-st { background: #1A1C1D; }
 .stgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
@@ -550,8 +586,8 @@ button { cursor: pointer; }
   </footer>
 </div>
 <div id="toast" hidden></div>
-<script src="stretch.js?v=0.6.0"></script>
-<script src="fx.js?v=0.6.0"></script>
-<script src="app.js?v=0.6.0"></script>
+<script src="stretch.js?v=0.7.0"></script>
+<script src="fx.js?v=0.7.0"></script>
+<script src="app.js?v=0.7.0"></script>
 </body>
 </html>

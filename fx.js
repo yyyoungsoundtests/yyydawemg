@@ -715,11 +715,9 @@ FXUI.lim = (obj, ctx) => {
   });
   const right = el('div', { class: 'l3right' }, el('div', { class: 'l3bezel' }, disp), cols);
   const root = el('div', { class: 'pl pl-l3' },
-    el('div', { class: 'plhead l3top' }, powerBtn(L, ctx), el('b', {}, 'Multimaximizer'), el('span', { class: 'dim' }, 'Threshold −7, Out Ceiling −1, Release 1.00 · экспорт подбирает Threshold под целевой RMS')),
+    el('div', { class: 'plhead l3top' }, powerBtn(L, ctx), el('b', {}, 'Multimaximizer'), el('span', { class: 'dim' }, 'Threshold −7, Out Ceiling −0.3, Release 1.00 · громкость выставляешь сам по анализаторам')),
     el('div', { class: 'l3main' }, left, right),
     el('div', { class: 'l3exp' },
-      el('label', { class: 'tog' }, (() => { const c = el('input', { type: 'checkbox', checked: M.autoRms }); c.addEventListener('change', () => { M.autoRms = c.checked; ctx.commit(); }); return c; })(), el('span', {}, 'При экспорте подгонять RMS к')),
-      dragNum({ value: M.targetRms, min: -18, max: -6, step: 0.1, fmt: (v) => v.toFixed(1) + ' dB', onInput: (v) => { M.targetRms = v; }, onChange: ctx.commit }),
       el('label', { class: 'tog' }, (() => { const c = el('input', { type: 'checkbox', checked: M.fades }); c.addEventListener('change', () => { M.fades = c.checked; ctx.commit(); }); return c; })(), el('span', {}, 'Фейды 50 мс')),
       el('span', { class: 'dim' }, 'Лимитер работает по 6 полосам: Gain поднимает/опускает полосу перед лимитером, Priority — чем выше, тем меньше эту полосу давят, Separation — насколько полосы ограничиваются независимо (High — бас не «качает» голос).')));
   let drag = null;
@@ -871,6 +869,76 @@ FXUI.sends = (obj, ctx) => {
       el('p', { class: 'note' }, 'Короткий хвост 0.6–1.2 с и Low cut 250–400 Гц дают «воздух» без гула. Pre-delay 15–30 мс отделяет ревер от голоса, чтобы речь оставалась разборчивой.')));
   requestAnimationFrame(drawIR);
   return { el: root };
+};
+
+/* ---- R-Compressor (classic navy channel compressor layout) ---- */
+FXUI.rcomp = (obj, ctx) => {
+  const R = obj.rcomp;
+  const box = (key, label, min, max, step, fmt, log) => el('div', { class: 'rcbox' }, el('span', {}, label), dragNum({ value: R[key], min, max, step, log, fmt, onInput: (v) => { R[key] = v; ctx.change(); syncMarks(); }, onChange: ctx.commit }));
+  const lampBtn = (key, label) => { const b = el('button', { class: 'rclamp' + (R[key] ? ' on' : ''), onclick: () => { R[key] = !R[key]; b.classList.toggle('on', R[key]); ctx.change(); ctx.commit(); } }, el('span', {}, label), el('i')); return b; };
+  const inM = [el('canvas', { class: 'rcm' }), el('canvas', { class: 'rcm' })], outM = [el('canvas', { class: 'rcm' }), el('canvas', { class: 'rcm' })];
+  const atM = el('canvas', { class: 'rcat' });
+  const thrBox = box('thresh', 'Thresh', -60, 0, 0.1, (v) => v.toFixed(1));
+  const gainBox = box('gain', 'Gain', -18, 18, 0.1, (v) => v.toFixed(1));
+  const ratioBox = box('ratio', 'Ratio', 1, 50, 0.01, (v) => v.toFixed(2), true);
+  const thrWrap = el('div', { class: 'rcmark' }, thrBox), gainWrap = el('div', { class: 'rcmark r' }, gainBox), ratioWrap = el('div', { class: 'rcmark c' }, ratioBox);
+  const syncMarks = () => { thrWrap.style.top = (-R.thresh / 60 * 100) + '%'; gainWrap.style.top = (50 - R.gain / 18 * 50) + '%'; };
+  const root = el('div', { class: 'pl pl-rc' },
+    el('div', { class: 'plhead' }, powerBtn(R, ctx), el('b', {}, 'R-Compressor'), el('span', { class: 'dim' }, 'пресет Voiceover: Thresh 0, Ratio 4.01, Attack 5.02, Release 50.2, ARC · Electro · Warm')),
+    el('div', { class: 'rcface' },
+      el('div', { class: 'rctop' }, lampBtn('arc', 'ARC'), lampBtn('electro', 'Electro'), lampBtn('warm', 'Warm'),
+        el('div', { class: 'rcmt' }, box('mix', 'Mix', 0, 100, 0.1, (v) => v.toFixed(1)), box('trim', 'Trim', -18, 18, 0.1, (v) => v.toFixed(1)))),
+      el('div', { class: 'rcmain' },
+        el('div', { class: 'rcside' }, el('div', { class: 'rcmeters' }, ...inM, thrWrap), el('small', {}, 'Input')),
+        el('div', { class: 'rccenter' },
+          el('div', { class: 'rcar' }, box('attack', 'Attack', 0.5, 300, 0.01, (v) => v.toFixed(2), true), box('release', 'Release', 5, 3000, 0.1, (v) => v.toFixed(1), true)),
+          el('div', { class: 'rcatwrap' }, ratioWrap, atM),
+          el('small', {}, 'Attenuation')),
+        el('div', { class: 'rcside' }, el('div', { class: 'rcmeters' }, gainWrap, ...outM), el('small', {}, 'Output')))),
+    el('p', { class: 'note' }, 'Стоит после Vocal Leveler; по умолчанию выключен — включи галочкой и сравни. С порогом 0 дБ он ловит только самые громкие пики: опусти Thresh, чтобы сжимал сильнее. Все режимы чистые, без перегруза.'));
+  syncMarks();
+  const v = { gr: 0, i: -90, o: -90 };
+  const bar = (c, db, color) => { const [x, w, h] = canvas2d(c); x.fillStyle = '#05080F'; x.fillRect(0, 0, w, h); const k = Math.min(1, Math.max(0, (db + 60) / 60)) * h; x.fillStyle = color; x.fillRect(1, h - k, w - 2, k); x.fillStyle = 'rgba(255,255,255,.35)'; for (let i = 1; i < 10; i++) x.fillRect(0, Math.round(h * i / 10), w, 1); };
+  return { el: root, tick: () => {
+    const m = ctx.gr('rcomp');
+    v.gr += ((S.playing && m ? m.gr : 0) - v.gr) * 0.35; v.i = Math.max(S.playing && m ? m.inp : -90, v.i - 1.5); v.o = Math.max(S.playing && m ? m.out : -90, v.o - 1.5);
+    inM.forEach((c) => bar(c, v.i, '#E8C33A')); outM.forEach((c) => bar(c, v.o, '#E8C33A'));
+    const [x, w, h] = canvas2d(atM);
+    const g = x.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#0B1030'); g.addColorStop(0.3, '#0B1030'); g.addColorStop(0.3, '#2A0B0B'); g.addColorStop(1, '#1A0606');
+    x.fillStyle = g; x.fillRect(0, 0, w, h);
+    const zero = h * 0.3, per = (h - zero) / 15;
+    x.fillStyle = '#C9302A'; x.fillRect(4, zero, w - 8, Math.min(h - zero, v.gr * per));
+    x.fillStyle = '#DADADA'; x.font = '12px ui-monospace, Menlo, monospace'; x.textAlign = 'center';
+    for (const [d, y] of [[6, zero - 6 * per], [3, zero - 3 * per], [3, zero + 3 * per], [6, zero + 6 * per], [12, zero + 12 * per]]) x.fillText('– ' + d + ' –', w / 2, y + 4);
+    x.fillStyle = '#E8E8E8'; x.fillRect(2, zero, w - 4, 2); x.textAlign = 'start';
+  } };
+};
+
+/* ---- Bus Compressor (clean master glue) ---- */
+FXUI.glue = (obj, ctx) => {
+  const G = obj.glue;
+  const vu = el('canvas', { class: 'vu gl' });
+  const k = (key, label, min, max, def, fmt, log, steps, stepFmt) => knob({ value: G[key], min, max, def, log, steps, stepFmt, size: 70, cls: 'k-glue', label, fmt, onInput: (v) => { G[key] = v; ctx.change(); }, onChange: ctx.commit });
+  const RAT = [1.5, 2, 4, 10];
+  const ratioIdx = Math.max(0, RAT.indexOf(G.ratio));
+  const ratio = knob({ value: ratioIdx, steps: RAT.length, size: 70, cls: 'k-glue', label: 'RATIO', labels: RAT.map(String), stepFmt: (i) => RAT[i] + ':1', onInput: (i) => { G.ratio = RAT[i]; ctx.change(); }, onChange: ctx.commit });
+  const autoB = el('button', { class: 'glbtn' + (G.auto ? ' on' : ''), onclick: () => { G.auto = !G.auto; autoB.classList.toggle('on', G.auto); ctx.change(); ctx.commit(); } }, 'AUTO RELEASE');
+  const root = el('div', { class: 'pl pl-gl' },
+    el('div', { class: 'plhead' }, powerBtn(G, ctx), el('b', {}, 'Bus Compressor'), el('span', { class: 'dim' }, 'чистый «клей» мастера перед лимитером: 1–2 дБ сжатия, без окраски')),
+    el('div', { class: 'glface' },
+      el('div', { class: 'glvu' }, vu),
+      el('div', { class: 'glknobs' },
+        k('thresh', 'THRESHOLD', -30, 0, -14, (v) => v.toFixed(1) + ' dB'),
+        ratio,
+        k('attack', 'ATTACK', 0.1, 30, 10, (v) => (v < 1 ? v.toFixed(1) : Math.round(v)) + ' ms', true),
+        k('release', 'RELEASE', 0.1, 1.2, 0.3, (v) => v.toFixed(2) + ' s'),
+        k('makeup', 'MAKE-UP', 0, 12, 0, (v) => '+' + v.toFixed(1) + ' dB'),
+        k('mix', 'MIX', 0, 100, 100, (v) => Math.round(v) + '%'),
+        k('schp', 'SC HPF', 20, 300, 90, (v) => Math.round(v) + ' Hz', true)),
+      el('div', { class: 'glbtns' }, autoB)),
+    el('p', { class: 'note' }, 'Ставь порог так, чтобы стрелка ходила на 1–2 дБ. SC HPF не даёт басу «качать» компрессор. Auto Release сам подстраивает восстановление под материал.'));
+  let nd = 0;
+  return { el: root, tick: () => { const m = ctx.gr('glue'); nd += ((S.playing && m ? -m.gr : 0) - nd) * 0.15; drawVUFace(vu, nd, 'GAIN REDUCTION'); } };
 };
 
 /* ---- Audio statistics ---- */
