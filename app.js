@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.9.0';
+const APP_VERSION = '0.9.1';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -63,6 +63,8 @@ const ls = {
 /* ================= Project model ================= */
 
 /* ================= Project model ================= */
+const EXTRA_COLORS = ['#C9A0DC', '#6FB3E0', '#E0A86F', '#8FD18A', '#E07F9E', '#B8C46A'];
+const trackColor = (id) => TRACK_COLORS[id] || (P && P.tracks.find((t) => t.id === id)?.color) || '#999';
 const TRACK_COLORS = { v1: '#D6A544', v2: '#D07454', mu: '#4BAE98', fx: '#9D90D8' };
 const eqBand = (type, f, g = 0, q = 1, on = true) => ({ type, f, g, q, on });
 function defaultEQ(kind) {
@@ -229,7 +231,7 @@ function restore(i) {
   const ph = P.playhead; P = JSON.parse(S.hist[i]); P.playhead = ph; S.hidx = i;
   for (const id of [...S.sel]) if (!P.clips.find((c) => c.id === id)) S.sel.delete(id);
   if (S.selRegion && !P.regions.find((r) => r.id === S.selRegion)) S.selRegion = null;
-  applyLive(); renderHeaders(); renderInspector(); scheduleSave(); updateToolbar(); redraw();
+  applyLive(); resize(); renderInspector(); scheduleSave(); updateToolbar(); redraw();
 }
 const undo = () => restore(S.hidx - 1);
 const redo = () => restore(S.hidx + 1);
@@ -294,7 +296,7 @@ async function importFiles(files, trackId, at) {
       const fileId = uid();
       let buf = await decodeBlob(f), blob = f;
       const trk = P.tracks.find((k) => k.id === trackId);
-      if (trk && trk.kind === 'voice' && buf.numberOfChannels > 1) {
+      if (trk && (trk.kind === 'voice' || trk.mono) && buf.numberOfChannels > 1) {
         // voice is always mono: fold L+R into one channel and keep that file
         const a = buf.getChannelData(0), b = buf.getChannelData(1), m = new Float32Array(a.length);
         for (let i = 0; i < a.length; i++) m[i] = (a[i] + b[i]) * 0.5;
@@ -831,7 +833,7 @@ function clipRect(c) {
 const HEAD = 15;
 function drawClip(c) {
   const r = clipRect(c); if (r.x > W || r.x + r.w < 0) return;
-  const x = cx, tc = TRACK_COLORS[c.track] || '#999', sel = S.sel.has(c.id), e = buffers.get(c.src), F = effFades(c);
+  const x = cx, tc = trackColor(c.track), sel = S.sel.has(c.id), e = buffers.get(c.src), F = effFades(c);
   x.save(); x.beginPath(); x.rect(r.x, r.y, r.w, r.h); x.clip();
   // in a crossfade the later clip is see-through, so the earlier clip's fade-out stays visible (crossed fades)
   const xw = F.xin * S.pps;
@@ -1545,8 +1547,8 @@ const refreshInspectorValues = () => refreshBar();
 
 function renderTCP() {
   if (!P) return;
-  const h = $('#heads'); h.innerHTML = '';
-  h.append(el('div', { class: 'tcpTop', style: `height:${TOP}px` }, el('span', {}, 'Дорожки'), el('small', {}, 'тап по имени — FX')));
+  const h = $('#heads'); h.innerHTML = ''; h.scrollLeft = 0;
+  h.append(el('div', { class: 'tcpTop', style: `height:${TOP}px` }, el('span', {}, 'Дорожки'), el('button', { class: 'addtrack', onclick: openAddTrack }, '+ Дорожка')));
   const anySolo = P.tracks.some((k) => k.solo);
   P.tracks.forEach((t, i) => {
     const fileIn = el('input', { type: 'file', multiple: true, accept: 'audio/*,.wav,.mp3,.aif,.aiff,.m4a,.flac,.ogg', hidden: true, onchange: (e) => { importFiles([...e.target.files], t.id, P.playhead); e.target.value = ''; } });
@@ -1556,14 +1558,14 @@ function renderTCP() {
     vol.addEventListener('input', () => { t.vol = +vol.value; volTxt.textContent = fmtDb(t.vol) + 'dB'; applyLive(); });
     vol.addEventListener('change', commit);
     vol.addEventListener('dblclick', () => { t.vol = 0; vol.value = 0; volTxt.textContent = fmtDb(0) + 'dB'; applyLive(); commit(); });
-    const row = el('div', { class: 'tcp' + (t.mute || (anySolo && !t.solo) ? ' muted' : ''), style: `height:${laneH}px;--tc:${TRACK_COLORS[t.id]}` },
+    const row = el('div', { class: 'tcp' + (t.mute || (anySolo && !t.solo) ? ' muted' : ''), style: `height:${laneH}px;--tc:${trackColor(t.id)}` },
       el('div', { class: 'tnum' }, String(i + 1)),
       el('div', { class: 'tmain' },
         el('div', { class: 'trow' },
-          el('button', { class: 'tname', onclick: () => openFx(t.id) }, t.name),
+          el('button', { class: 'tname', onclick: () => openFx(t.id), ondblclick: (e) => { e.preventDefault(); renameTrack(t); }, title: t.custom ? 'Тап — FX, двойной тап — переименовать' : '' }, t.name),
           el('button', { class: 'fxb' + (active ? ' act' : ''), onclick: () => openFx(t.id), title: 'Цепочка обработки' }, 'FX'),
           el('button', { class: 'addb', onclick: () => fileIn.click(), 'aria-label': 'Добавить файл на дорожку' }, '+'), fileIn),
-        el('div', { class: 'trow' }, vol, el('button', { class: 'monob' + (t.mono ? ' on' : ''), title: 'Свести дорожку в моно', onclick: () => { t.mono = !t.mono; commit(); applyLive(); renderTCP(); } }, 'MONO')),
+        el('div', { class: 'trow' }, vol, t.custom ? el('button', { class: 'delb', title: 'Удалить дорожку', onclick: () => askDeleteTrack(t) }, '×') : null),
         el('div', { class: 'trow sub' }, volTxt,
           t.kind === 'music' ? el('span', { class: 'grbar', title: 'Подавление музыки голосом' }, el('i', { id: 'duckGr' })) : null)),
       el('div', { class: 'tms' },
@@ -1583,6 +1585,37 @@ function renderTCP() {
       el('div', { class: 'trow sub' }, el('span', { class: 'mono' }, 'RMS ', el('b', { id: 'mRmsM' }, '—')), el('span', { class: 'mono' }, 'Пик ', el('b', { id: 'mPkM' }, '—')))),
     el('div', { class: 'tms' })));
   redraw();
+}
+// Extra mono tracks: voice-type (full voice chain, ducks the music) or SFX-type (EQ only)
+function openAddTrack() {
+  const add = (kind) => {
+    const n = P.tracks.filter((t) => t.custom).length;
+    const id = 't' + uid(), base = kind === 'voice' ? 'VOICE' : 'SFX';
+    const same = P.tracks.filter((t) => t.name.startsWith(base)).length;
+    const t = kind === 'voice'
+      ? { id, name: `${base} ${same + 1}`, kind: 'voice', custom: true, mono: true, color: EXTRA_COLORS[n % EXTRA_COLORS.length], vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('voice') }, vox: DEF.vox(-12), rcomp: DEF.rcomp(), la2a: DEF.la2a(), deess: DEF.deessVoice(), drive: { on: false, amount: 0 }, sends: DEF.sends() }
+      : { id, name: `${base} ${same + 1}`, kind: 'fx', custom: true, mono: true, color: EXTRA_COLORS[n % EXTRA_COLORS.length], vol: 0, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('fx') } };
+    const mi = P.tracks.findIndex((x) => x.kind === 'music');
+    if (kind === 'voice') P.tracks.splice(mi >= 0 ? mi : P.tracks.length, 0, t); else P.tracks.push(t);
+    stop(false); commit(); closeModal(); resize(); toast(`Добавлена моно-дорожка ${t.name}`);
+  };
+  modal('Новая моно-дорожка', el('div', { class: 'btns col' },
+    el('button', { class: 'btn big primary', onclick: () => add('voice') }, 'Голос (моно) — вся голосовая обработка, музыка под неё уступает'),
+    el('button', { class: 'btn big', onclick: () => add('fx') }, 'SFX (моно) — эквалайзер, для звуков и эффектов'),
+    el('p', { class: 'note' }, 'Всё, что кидаешь на эту дорожку, сводится в моно. Двойной тап по названию — переименовать, «×» — удалить дорожку.')));
+}
+function renameTrack(t) {
+  const row = [...document.querySelectorAll('.tcp .tname')].find((b) => b.textContent === t.name); if (!row) return;
+  const inp = el('input', { type: 'text', class: 'txt tnamein', value: t.name });
+  row.replaceWith(inp); inp.focus(); inp.select();
+  const done = () => { const v = inp.value.trim(); if (v && v !== t.name) { t.name = v; commit(); } renderTCP(); };
+  inp.addEventListener('blur', done); inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.value = t.name; inp.blur(); } });
+}
+function askDeleteTrack(t) {
+  const n = P.clips.filter((c) => c.track === t.id).length;
+  modal('Удалить дорожку', el('p', {}, `Удалить «${t.name}»${n ? ` вместе с клипами (${n})` : ''}? Отменить можно через ⌘Z.`),
+    [el('button', { class: 'btn', onclick: closeModal }, 'Нет'),
+     el('button', { class: 'btn danger', onclick: () => { stop(false); P.clips = P.clips.filter((c) => c.track !== t.id); P.tracks = P.tracks.filter((x) => x !== t); S.sel.clear(); commit(); closeModal(); resize(); renderBar(); } }, 'Удалить')]);
 }
 function renderMasterStrip() {
   const fx = document.querySelector('.tcp.master .fxb');
@@ -1748,7 +1781,7 @@ function openFx(target, key) {
     el('div', { class: 'fxbody' }, list, gui));
   const m = el('div', { class: 'modal', id: 'modal', onclick: (e) => { if (e.target.id === 'modal') closeModal(); } }, win);
   document.body.append(m);
-  const ctx = { obj, target, key, color: target === 'master' ? '#E8E4DA' : TRACK_COLORS[target], an: () => T.g && (target === 'master' ? (key === 'mb' ? T.g.master.anIn : T.g.master.anEq) : T.g.tracks[target]?.an), gr: (k) => Meter.gr[(target === 'master' ? 'master' : target) + '.' + k], change: () => { applyLive(); }, commit: () => { commit(); renderMasterStrip(); } };
+  const ctx = { obj, target, key, color: target === 'master' ? '#E8E4DA' : trackColor(target), an: () => T.g && (target === 'master' ? (key === 'mb' ? T.g.master.anIn : T.g.master.anEq) : T.g.tracks[target]?.an), gr: (k) => Meter.gr[(target === 'master' ? 'master' : target) + '.' + k], change: () => { applyLive(); }, commit: () => { commit(); renderMasterStrip(); } };
   const ui = FXUI[key](obj, ctx);
   gui.append(ui.el);
   FXW.tick = ui.tick || null;

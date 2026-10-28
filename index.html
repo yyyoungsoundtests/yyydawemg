@@ -53,14 +53,20 @@ button { cursor: pointer; }
 
 /* main area */
 .main { display: grid; grid-template-columns: 216px minmax(0, 1fr); min-height: 0; }
-#heads { background: var(--tcp2); border-right: 1px solid var(--line); overflow: hidden; }
-.tcpTop { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 0; background: #2A2C2D; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px; }
+#heads { background: var(--tcp2); border-right: 1px solid var(--line); overflow: hidden; overflow: clip; min-width: 0; }
+.tcpTop { display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; background: #2A2C2D; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px; }
 .tcpTop span { font-weight: 600; color: var(--fg); }
 .tcp { display: grid; grid-template-columns: 20px 1fr 28px; border-bottom: 1px solid var(--line); background: var(--tcp); box-shadow: inset 3px 0 0 var(--tc); }
 .tcp.muted { background: #343536; }
 .tcp.master { background: #2E3032; box-shadow: inset 3px 0 0 #E8E4DA; border-top: 2px solid #121314; }
 .tcp.master .tnum { color: #E8E4DA; font-weight: 700; }
 .tcp.master .tname { letter-spacing: .08em; }
+.addtrack { margin-left: auto; height: 28px; padding: 0 10px; border: 1px solid #3E7F6D; border-radius: 3px; background: #24332F; color: var(--accent); font-weight: 600; font-size: 12px; }
+.addtrack:hover { background: #303334; }
+.delb { width: 24px; height: 22px; border-radius: 3px; border: 1px solid var(--line); background: var(--btn); color: #FF9A8C; font-size: 15px; line-height: 1; flex: none; }
+.tnamein { flex: 1; min-width: 0; font-size: 12.5px; }
+.btns.col { flex-direction: column; align-items: stretch; }
+.btns.col .btn { white-space: normal; text-align: left; }
 .monob { height: 22px; padding: 0 6px; border-radius: 3px; border: 1px solid var(--line); background: var(--btn); font: 700 9.5px var(--f-ui); letter-spacing: .04em; color: #B9BDBE; flex: none; }
 .monob.on { background: #3D6E9E; color: #fff; border-color: #5A8EC2; }
 .mmtr { flex: 1; min-width: 0; height: 14px; display: block; }
@@ -519,7 +525,9 @@ button { cursor: pointer; }
   .fxb { width: 28px; } .addb { width: 24px; }
   .trow.sub { display: none; }
   .tcp.master .trow.sub { display: flex; }
-  .tcpTop small { display: none; }
+  .tcpTop small, .tcpTop span { display: none; }
+  .addtrack { margin-left: 0; width: 100%; padding: 0 4px; font-size: 11.5px; }
+  .tcp { min-width: 0; }
   .hide-s { display: none !important; }
   #meterT { width: 80px; }
   .mvals { grid-template-columns: repeat(2, auto); }
@@ -588,8 +596,8 @@ button { cursor: pointer; }
   </footer>
 </div>
 <div id="toast" hidden></div>
-<script src="stretch.js?v=0.9.0"></script>
-<script src="fx.js?v=0.9.0"></script>
-<script src="app.js?v=0.9.0"></script>
+<script src="stretch.js?v=0.9.1"></script>
+<script src="fx.js?v=0.9.1"></script>
+<script src="app.js?v=0.9.1"></script>
 </body>
 </html>
