@@ -52,8 +52,8 @@ button { cursor: pointer; }
 .spacer { flex: 1; }
 
 /* main area */
-.main { display: grid; grid-template-columns: 216px minmax(0, 1fr); min-height: 0; }
-#heads { background: var(--tcp2); border-right: 1px solid var(--line); overflow: hidden; overflow: clip; min-width: 0; }
+.main { display: grid; grid-template-columns: 216px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-height: 0; overflow: hidden; position: relative; z-index: 0; }
+#heads { background: var(--tcp2); border-right: 1px solid var(--line); overflow: hidden; overflow: clip; min-width: 0; min-height: 0; }
 .tcpTop { display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; background: #2A2C2D; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px; }
 .tcpTop span { font-weight: 600; color: var(--fg); }
 .tcp { display: grid; grid-template-columns: 20px 1fr 28px; border-bottom: 1px solid var(--line); background: var(--tcp); box-shadow: inset 3px 0 0 var(--tc); }
@@ -128,7 +128,7 @@ button { cursor: pointer; }
 
 
 /* context bar */
-.ctxbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 6px 10px; background: var(--bar2); border-top: 1px solid var(--line); min-height: 44px; }
+.ctxbar { position: relative; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 6px 10px; background: var(--bar2); border-top: 1px solid var(--line); min-height: 44px; }
 .cgrp { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); flex-wrap: wrap; }
 .cgrp b { color: var(--fg); }
 .cname { max-width: 22ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -145,8 +145,9 @@ button { cursor: pointer; }
 .num { font-family: var(--f-mono); font-size: 12px; }
 
 /* transport */
-.transport { display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: var(--bar); border-top: 1px solid var(--line); flex-wrap: wrap; }
-.tgrp { display: flex; align-items: center; gap: 3px; }
+.transport { position: relative; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: var(--bar); border-top: 1px solid var(--line); flex-wrap: wrap; }
+.tgrp { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+.ttop #bPlay { height: 32px; }
 #bPlay { width: 44px; background: #DDE1E1; color: #1A1B1C; border-color: #111; }
 #bPlay.on { background: #3FAF63; color: #fff; }
 .tclock { display: flex; flex-direction: column; background: #121314; border: 1px solid #000; border-radius: 3px; padding: 2px 10px; min-width: 132px; }
@@ -556,6 +557,12 @@ button { cursor: pointer; }
   <header class="top">
     <button id="projName" aria-label="Проекты">Проект</button>
     <span class="sep"></span>
+    <div class="tgrp ttop">
+      <button class="tb" id="bHome" aria-label="В начало"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM9.5 12 19 5v14z" fill="currentColor"/></svg></button>
+      <button class="tb" id="bPlay" aria-label="Играть"></button>
+      <button class="tb" id="bLoop" aria-label="Луп" title="Луп (R): проведи по линейке, чтобы задать участок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a6 6 0 0 1 6-6h8m0 0-3-3m3 3-3 3M20 12a6 6 0 0 1-6 6H6m0 0 3 3m-3-3 3-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
+    <span class="sep"></span>
     <button class="tb" id="bUndo" aria-label="Отменить" title="Отменить (⌘Z)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H4V2M4.5 7A8 8 0 1 1 6 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
     <button class="tb" id="bRedo" aria-label="Повторить" title="Повторить (⇧⌘Z)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 7h5V2M19.5 7A8 8 0 1 0 18 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
     <span class="sep"></span>
@@ -585,11 +592,6 @@ button { cursor: pointer; }
   </div>
   <div id="ctx" class="ctxbar"></div>
   <footer class="transport">
-    <div class="tgrp">
-      <button class="tb" id="bHome" aria-label="В начало"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM9.5 12 19 5v14z" fill="currentColor"/></svg></button>
-      <button class="tb" id="bPlay" aria-label="Играть"></button>
-      <button class="tb" id="bLoop" aria-label="Луп" title="Луп (R): проведи по линейке, чтобы задать участок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a6 6 0 0 1 6-6h8m0 0-3-3m3 3-3 3M20 12a6 6 0 0 1-6 6H6m0 0 3 3m-3-3 3-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    </div>
     <div class="tclock"><span id="time">0:00.000</span><span id="tstate">Остановлено</span></div>
     <div class="tmeter" title="Выход мастера">
       <canvas id="meterT"></canvas>
@@ -603,9 +605,9 @@ button { cursor: pointer; }
   </footer>
 </div>
 <div id="toast" hidden></div>
-<script src="stretch.js?v=0.11.1"></script>
-<script src="fx.js?v=0.11.1"></script>
-<script src="app.js?v=0.11.1"></script>
-<script src="reaper.js?v=0.11.1"></script>
+<script src="stretch.js?v=0.11.3"></script>
+<script src="fx.js?v=0.11.3"></script>
+<script src="app.js?v=0.11.3"></script>
+<script src="reaper.js?v=0.11.3"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.11.1';
+const APP_VERSION = '0.11.3';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -212,7 +212,7 @@ let P = null;                 // current project
 const buffers = new Map();    // fileId -> { buf, peaks }
 const S = {
   pps: 40, x0: -0.5, sel: new Set(), selRegion: null, inspector: 'none', inspectorTrack: null,
-  snap: ls.get('snap', true), ripple: ls.get('ripple', false), playing: false, follow: true,
+  snap: ls.get('snap', true), ripple: ls.get('ripple', false), playing: false, follow: false,
   hist: [], hidx: -1, dirty: true, saveTimer: null,
 };
 
@@ -969,7 +969,12 @@ function startDrag(px, py, e) {
       const fadeZone = py < r.y + 26;
       if (fadeZone && Math.abs(px - fiX) < (isTouch ? 16 : 8) && S.sel.has(c.id)) D.kind = 'fadeIn';
       else if (fadeZone && Math.abs(px - foX) < (isTouch ? 16 : 8) && S.sel.has(c.id)) D.kind = 'fadeOut';
-      else if (S.tool === 'stretch') { D.kind = 'stretch'; D.dur0 = c.dur; S.sel = new Set([c.id]); }
+      else if (S.tool === 'stretch') {
+        D.kind = 'stretch'; D.dur0 = c.dur;
+        if (!(S.sel.has(c.id) && S.sel.size > 1)) S.sel = new Set([c.id]);
+        const g = P.clips.filter((k) => S.sel.has(k.id));
+        D.g0 = Math.min(...g.map((k) => k.start)); D.gLen = Math.max(...g.map((k) => k.start + k.dur)) - D.g0;
+      }
       else if (px - r.x < edge) D.kind = 'trimL';
       else if (r.x + r.w - px < edge) D.kind = 'trimR';
       else D.kind = 'move';
@@ -1041,9 +1046,11 @@ function dragMove(D, px, py) {
       c.dur = clamp(ne - o.start, 0.02, maxD); c.fout = Math.min(c.fout, c.dur / 2); break;
     }
     case 'stretch': {
-      const c = D.clip, ne = snapTime(c.start + D.dur0 + dt, S.sel, null, null, c.track);
-      c.dur = clamp(ne - c.start, D.dur0 / 2, D.dur0 * 2); c._pv = D.dur0 / c.dur;
-      Drag.stretchTxt = `${Math.round(c._pv * 1000) / 10}% · ${c.dur.toFixed(2)} с`;
+      // the whole selection stretches from its start, like one file
+      const ne = snapTime(D.g0 + D.gLen + dt, S.sel, null, null, D.clip.track);
+      const k = clamp((ne - D.g0) / D.gLen, 0.5, 2);
+      for (const o of D.orig) { const c = P.clips.find((x) => x.id === o.id); c.start = D.g0 + (o.start - D.g0) * k; c.dur = o.dur * k; c._pv = 1 / k; }
+      Drag.stretchTxt = `${Math.round(1000 / k) / 10}% · ${(D.gLen * k).toFixed(2)} с${D.orig.length > 1 ? ` · ${nClips(D.orig.length)}` : ''}`;
       break;
     }
     case 'fadeIn': { const c = D.clip; c.fin = clamp(xToT(px) - c.start, 0.002, c.dur - c.fout); break; }
@@ -1067,8 +1074,8 @@ function endDrag(D) {
     Drag.lastReg = D.reg.id; Drag.lastRegT = now;
   }
   if (D.kind === 'stretch') {
-    const c = D.clip, tempo = c._pv; Drag.stretchTxt = null;
-    c.dur = D.dur0; delete c._pv;
+    const tempo = D.clip._pv; Drag.stretchTxt = null;
+    for (const o of D.orig) { const c = P.clips.find((x) => x.id === o.id); if (c) { c.start = o.start; c.dur = o.dur; delete c._pv; } }
     if (D.moved && tempo && Math.abs(tempo - 1) > 0.002) stretchSel(tempo); else { renderBar(); redraw(); }
     return;
   }
@@ -1393,25 +1400,34 @@ async function glueSel() {
     commit(); renderBar(); redraw(); toast('Склеено в один клип');
   });
 }
+const nClips = (n) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? 'клип' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'клипа' : 'клипов'}`;
+// Speed change. Several selected clips stretch together like one file: every clip gets the same tempo
+// and their positions scale around the start of the group, so the arrangement stays the same.
 async function stretchSel(tempo) {
-  let cs = selClips();
+  const cs = selClips().sort((a, b) => a.start - b.start);
   if (!cs.length) { toast('Выдели клип голоса'); return; }
   if (!isFinite(tempo) || Math.abs(tempo - 1) < 0.0005 || tempo < 0.5 || tempo > 2) { toast('Скорость от 50% до 200%'); return; }
   await withBusy('stretch', async () => {
-    let c = cs[0];
-    if (cs.length > 1) { toast('Склеиваю выделенное…', 8000); c = await consolidateClips(cs); }
-    await ensureBuffer(c.src);
     const mode = ls.get('stretchMode', 'st');
-    const out = await stretchAudio(sliceClipAudio(c), SR, tempo, mode, (p) => toast(`Ускоряю… ${Math.round(p * 100)}%`, 8000));
-    const total = (c.tempo || 1) * tempo, pct = Math.round(total * 1000) / 10;
-    const base = c.name.replace(/ ⏩[\d.]+%$/, '');
-    const { fileId, dur } = await addRenderedFile(out, `${base}_${pct}%.wav`);
-    const oldEnd = c.start + c.dur;
-    if (!c.orig) c.orig = { src: c.src, offset: c.offset, dur: c.dur, name: c.name, fin: c.fin, fout: c.fout };
-    Object.assign(c, { src: fileId, offset: 0, dur, tempo: total, name: `${base} ⏩${pct}%`, fin: Math.min(c.fin, dur / 2), fout: Math.min(c.fout, dur / 2) });
-    if (S.ripple) { const d = c.start + dur - oldEnd; for (const o of P.clips) if (o !== c && o.track === c.track && o.start >= oldEnd - 1e-6) o.start += d; }
-    S.sel = new Set([c.id]); S.inspector = 'clip';
-    commit(); renderBar(); redraw(); toast(`Готово: ${pct}% · ${dur.toFixed(2)} с (${mode === 'speech' ? 'речь' : 'SoundTouch'})`, 3000);
+    const g0 = Math.min(...cs.map((c) => c.start)), gEnd = Math.max(...cs.map((c) => c.start + c.dur));
+    const tracks = new Set(cs.map((c) => c.track)), ids = new Set(cs.map((c) => c.id));
+    let lastPct = 100;
+    for (let i = 0; i < cs.length; i++) {
+      const c = cs[i];
+      await ensureBuffer(c.src);
+      const out = await stretchAudio(sliceClipAudio(c), SR, tempo, mode, (p) => toast(`Ускоряю${cs.length > 1 ? ` ${i + 1}/${cs.length}` : ''}… ${Math.round(p * 100)}%`, 8000));
+      const total = (c.tempo || 1) * tempo, pct = Math.round(total * 1000) / 10; lastPct = pct;
+      const base = c.name.replace(/ ⏩[\d.]+%$/, '');
+      const { fileId, dur } = await addRenderedFile(out, `${base}_${pct}%.wav`);
+      if (!c.orig) c.orig = { src: c.src, offset: c.offset, dur: c.dur, name: c.name, fin: c.fin, fout: c.fout, start: c.start };
+      const start = g0 + (c.start - g0) / tempo;
+      Object.assign(c, { start, src: fileId, offset: 0, dur, tempo: total, name: `${base} ⏩${pct}%`, fin: Math.min(c.fin, dur / 2), fout: Math.min(c.fout, dur / 2) });
+    }
+    const newEnd = Math.max(...cs.map((c) => c.start + c.dur));
+    if (S.ripple) { const d = newEnd - gEnd; for (const o of P.clips) if (!ids.has(o.id) && tracks.has(o.track) && o.start >= gEnd - 1e-6) o.start += d; }
+    S.sel = ids; S.inspector = 'clip';
+    commit(); renderBar(); redraw();
+    toast(`Готово: ${cs.length > 1 ? `${nClips(cs.length)} вместе, ` : ''}${lastPct}% · ${(newEnd - g0).toFixed(2)} с (${mode === 'speech' ? 'речь' : 'SoundTouch'})`, 3000);
   });
 }
 // Clipboard for clips: copy / cut / paste at the edit cursor on the same tracks
@@ -1442,7 +1458,7 @@ function selectTrack() {
   const cs = selClips(); if (!cs.length) return;
   S.sel = new Set(P.clips.filter((c) => c.track === cs[0].track).map((c) => c.id)); renderBar(); redraw();
 }
-function selSpan() { const cs = selClips(); if (!cs.length) return 0; const tr = cs[0].track, l = cs.filter((c) => c.track === tr); return Math.max(...l.map((c) => c.start + c.dur)) - Math.min(...l.map((c) => c.start)); }
+function selSpan() { const cs = selClips(); if (!cs.length) return 0; return Math.max(...cs.map((c) => c.start + c.dur)) - Math.min(...cs.map((c) => c.start)); }
 function loopTo(s, e) { P.loop = { s, e, on: true }; commit(); updateToolbar(); redraw(); if (S.playing) restartPlayback(); }
 function toggleLoop() {
   if (!P.loop || P.loop.e - P.loop.s < 0.05) {
