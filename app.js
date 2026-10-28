@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.10.1';
+const APP_VERSION = '0.10.2';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -1986,7 +1986,13 @@ function closeModal() { stopFxLoop(); const m = $('#modal'); if (m) m.remove(); 
 async function openExport() {
   const M = P.master;
   if (!P.regions.length) { toast('Нет регионов. Добавь регион на панели региона.'); return; }
-  const checks = P.regions.map((r) => el('label', { class: 'tog' }, el('input', { type: 'checkbox', checked: true, 'data-id': r.id }), el('span', {}, `${r.name}`, el('small', { class: 'mono' }, `  ${r.len} с`))));
+  // each region: checkbox + its name, editable right here (renames the region in the project)
+  const checks = P.regions.map((r) => {
+    const nm = el('input', { type: 'text', class: 'txt regname', value: r.name, autocomplete: 'off', 'aria-label': 'Название региона' });
+    nm.addEventListener('input', () => { const v = nm.value.trim(); if (v) { r.name = v; scheduleSave(); redraw(); hint(); } });
+    nm.addEventListener('change', () => { if (!nm.value.trim()) nm.value = r.name; commit(); });
+    return el('div', { class: 'tog regrow' }, el('input', { type: 'checkbox', checked: true, 'data-id': r.id }), nm, el('small', { class: 'mono' }, `${r.len} с`));
+  });
   const fmtSel = el('div', { class: 'seg' },
     ...[['wav', `WAV 48 кГц / ${P.master.lim.quantize === 16 ? 16 : 24} бит`], ['mp3', 'MP3 320']].map(([v, t]) => el('label', {}, el('input', { type: 'radio', name: 'fmt', value: v, checked: M.format === v }), el('span', {}, t))));
   const res = el('div', { class: 'results' });
