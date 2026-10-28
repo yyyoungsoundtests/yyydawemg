@@ -96,6 +96,7 @@ button { cursor: pointer; }
 .grbar i { display: block; height: 100%; width: 0; background: var(--tc); }
 #tlwrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
 #tl { position: absolute; inset: 0; touch-action: none; display: block; }
+@media (max-width: 700px) { #bPen { display: none; } }
 
 /* master strip (like the Reaper mixer master) */
 #mstrip { background: var(--tcp2); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
@@ -562,6 +563,7 @@ button { cursor: pointer; }
     <button class="tb" id="bPaste" title="Вставить в позицию курсора (⌘V)">Вставить</button>
     <button class="tb" id="bRipple" title="Удаление со сдвигом следующих клипов">Ripple</button>
     <button class="tb" id="bSnap" title="Прилипание к краям клипов, регионов и курсору">Snap</button>
+    <button class="tb" id="bPen" title="Режим Apple Pencil: пальцы — прокрутка и зум, карандаш — монтаж и жесты"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l1.2-4.6L16.5 4.1a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8 4 20z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M14.5 6l3.5 3.5" stroke="currentColor" stroke-width="2"/></svg>Pencil</button>
     <button class="tb" id="bMulti" title="Мультивыбор: тап добавляет клип к выделению">⧉ Выбор</button>
     <button class="tb" id="bStretch" title="Растяжение: тяни клип за край — меняется скорость"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v4l3 2M9 2h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Растянуть</button>
     <span class="sep"></span>
@@ -598,8 +600,8 @@ button { cursor: pointer; }
   </footer>
 </div>
 <div id="toast" hidden></div>
-<script src="stretch.js?v=0.10.0"></script>
-<script src="fx.js?v=0.10.0"></script>
-<script src="app.js?v=0.10.0"></script>
+<script src="stretch.js?v=0.10.1"></script>
+<script src="fx.js?v=0.10.1"></script>
+<script src="app.js?v=0.10.1"></script>
 </body>
 </html>

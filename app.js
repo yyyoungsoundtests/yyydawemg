@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.10.0';
+const APP_VERSION = '0.10.1';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -823,6 +823,7 @@ function draw() {
     if (ph >= -2 && ph <= W + 2) { x.fillStyle = C.play; x.fillRect(Math.round(ph) - 0.5, 0, 1.5, Hh); }
   }
   if (Drag.snapX != null) { x.fillStyle = 'rgba(255,255,255,.7)'; x.fillRect(Math.round(Drag.snapX), TOP, 1, Hh - TOP); }
+  drawPen(x);
   if (Drag.stretchTxt && Drag.active && Drag.active.clip) {
     const r = clipRect(Drag.active.clip); x.font = '700 13px -apple-system, system-ui, sans-serif';
     const tw = x.measureText(Drag.stretchTxt).width + 16, bx = Math.min(W - tw - 4, Math.max(4, r.x + r.w - tw)), by = r.y + HEAD + 6;
@@ -924,8 +925,12 @@ function hitRegion(px) {
   return null;
 }
 function onDown(e) {
-  cv.setPointerCapture(e.pointerId);
+  try { cv.setPointerCapture(e.pointerId); } catch {}
   const rect = cv.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top;
+  if (S.pen) {
+    if (e.pointerType === 'pen') return penDown(e, px, py);
+    if (Pen.id != null) return; // palm / finger while the pencil is down
+  }
   Drag.ptrs.set(e.pointerId, { x: px, y: py });
   if (Drag.ptrs.size === 2) {
     if (Drag.active && Drag.active.orig) cancelDrag();
@@ -935,6 +940,12 @@ function onDown(e) {
     Drag.active = null; return;
   }
   if (Drag.ptrs.size > 2) return;
+  if (S.pen && e.pointerType !== 'pen') { // Pencil mode: fingers only scroll and zoom
+    Drag.active = { kind: 'pan', sx: px, sy: py, t0: xToT(px), moved: false, x00: S.x0 }; return;
+  }
+  Drag.active = startDrag(px, py, e); redraw();
+}
+function startDrag(px, py, e) {
   const t = xToT(px);
   const D = { kind: null, sx: px, sy: py, t0: t, moved: false, shift: e.shiftKey };
   if (py < RULER_H) { D.kind = 'ruler'; }
@@ -966,7 +977,7 @@ function onDown(e) {
       D.track0 = trackIndex(c.track);
     } else { D.kind = 'empty'; D.x00 = S.x0; }
   }
-  Drag.active = D; redraw();
+  return D;
 }
 function cancelDrag() {
   const D = Drag.active; if (!D || !D.orig) return;
@@ -975,6 +986,7 @@ function cancelDrag() {
   Drag.active = null;
 }
 function onMove(e) {
+  if (S.pen && e.pointerType === 'pen') return penMove(e);
   if (!Drag.ptrs.has(e.pointerId)) return;
   const rect = cv.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top;
   Drag.ptrs.set(e.pointerId, { x: px, y: py });
@@ -984,7 +996,10 @@ function onMove(e) {
     S.pps = clamp(Drag.pinch.pps0 * d / Drag.pinch.d0, 2, 4000);
     S.x0 = Drag.pinch.tc - cxm / S.pps; redraw(); return;
   }
-  const D = Drag.active; if (!D) return;
+  dragMove(Drag.active, px, py);
+}
+function dragMove(D, px, py) {
+  if (!D) return;
   const dx = px - D.sx, dy = py - D.sy;
   if (!D.moved && Math.hypot(dx, dy) < (isTouch ? 6 : 3)) return;
   D.moved = true;
@@ -1038,9 +1053,13 @@ function onMove(e) {
   if (S.inspector === 'clip' || S.inspector === 'region') refreshInspectorValues();
 }
 function onUp(e) {
+  if (S.pen && e.pointerType === 'pen') return penUp(e);
   Drag.ptrs.delete(e.pointerId);
   if (Drag.pinch) { if (Drag.ptrs.size === 0) Drag.pinch = null; return; }
   const D = Drag.active; Drag.active = null; Drag.snapX = null;
+  endDrag(D);
+}
+function endDrag(D) {
   if (!D) return;
   if (D.kind === 'stretch') {
     const c = D.clip, tempo = c._pv; Drag.stretchTxt = null;
@@ -1066,6 +1085,143 @@ function onUp(e) {
   if (D.moved && D.orig) { commit(); if (S.playing) restartPlayback(); }
   else if (D.orig) updateToolbar();
   redraw();
+}
+/* ================= Apple Pencil mode =================
+   Fingers: scroll + pinch zoom only. Pencil: every edit, plus gestures:
+   quick vertical stroke through clips → cut there; zigzag (scribble) over clips → delete;
+   drag on empty space → box select. Hover shows a time cursor and highlights handles. */
+const Pen = { id: null, path: [], hover: null, box: null, rev: [], dir: 0, ext: 0 };
+const FLICK_MS = 320;
+function penPt(e) { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top, t: performance.now() }; }
+function penDown(e, px, py) {
+  if (Pen.id != null) return;
+  Pen.id = e.pointerId; Pen.path = [{ x: px, y: py, t: performance.now() }]; Pen.hover = null; Pen.box = null;
+  Pen.rev = []; Pen.dir = 0; Pen.ext = px;
+  const D = startDrag(px, py, e); D.pen = true;
+  if (D.kind === 'empty' || D.kind === 'pan') D.kind = 'penEmpty';
+  if (D.kind === 'ruler') D.loop0 = P.loop ? { ...P.loop } : null;
+  Drag.active = D; redraw();
+}
+// zigzag: fast horizontal direction reversals (≥3 within 900 ms, each swing ≥ 10 px)
+function penZig(p) {
+  const d = p.x - Pen.ext;
+  if (Pen.dir === 0) { if (Math.abs(d) >= 10) { Pen.dir = Math.sign(d); Pen.ext = p.x; } return false; }
+  if (Math.sign(d) === Pen.dir) { Pen.ext = p.x; return false; }
+  if (Math.abs(d) >= 10) { Pen.dir = -Pen.dir; Pen.ext = p.x; Pen.rev.push(p.t); }
+  while (Pen.rev.length && p.t - Pen.rev[0] > 900) Pen.rev.shift();
+  return Pen.rev.length >= 3;
+}
+function penRevert(D) {
+  if (Array.isArray(D.orig)) for (const o of D.orig) Object.assign(P.clips.find((c) => c.id === o.id) || {}, o);
+  if (D.kind === 'ruler') P.loop = D.loop0;
+  if (D.kind === 'regMove' || D.kind === 'regLen') Object.assign(D.reg, D.orig);
+  Drag.snapX = null; Drag.stretchTxt = null;
+}
+function isVStroke(path) {
+  const a = path[0], b = path[path.length - 1], dy = Math.abs(b.y - a.y);
+  let mnx = Infinity, mxx = -Infinity; for (const q of path) { mnx = Math.min(mnx, q.x); mxx = Math.max(mxx, q.x); }
+  return dy >= Math.min(40, laneH * 0.45) && mxx - mnx <= Math.max(16, dy * 0.3);
+}
+function penMove(e) {
+  const p = penPt(e);
+  if (e.pointerId !== Pen.id) { // hovering (pencil above the screen) or a stray event
+    if (Pen.id == null && !e.buttons) { Pen.hover = p; redraw(); }
+    return;
+  }
+  Pen.path.push(p);
+  const D = Drag.active; if (!D) return;
+  if (D.kind !== 'scratch' && D.kind !== 'stretch' && penZig(p)) { penRevert(D); D.kind = 'scratch'; D.moved = true; }
+  if (D.kind === 'scratch') { redraw(); return; }
+  const dx = p.x - D.sx, dy = p.y - D.sy;
+  if (D.kind === 'penEmpty') {
+    if (Math.hypot(dx, dy) > 6) D.moved = true;
+    if (D.moved && !isVStroke(Pen.path)) {
+      Pen.box = { x0: Math.min(D.sx, p.x), x1: Math.max(D.sx, p.x), y0: Math.min(D.sy, p.y), y1: Math.max(D.sy, p.y) };
+      S.sel = new Set(P.clips.filter((c) => { const r = clipRect(c); return r.x < Pen.box.x1 && r.x + r.w > Pen.box.x0 && r.y < Pen.box.y1 && r.y + r.h > Pen.box.y0; }).map((c) => c.id));
+    } else Pen.box = null;
+    redraw(); return;
+  }
+  if (D.kind === 'ruler' && Math.abs(dy) > 24 && Math.abs(dy) > 2 * Math.abs(dx)) { penRevert(D); D.kind = 'penEmpty'; D.moved = true; redraw(); return; }
+  // a clip grabbed with the pencil: while it still looks like a quick vertical stroke, hold the clip still
+  if (D.kind === 'move' && !D.free) {
+    if (p.t - Pen.path[0].t < FLICK_MS && Math.abs(dy) >= Math.abs(dx)) { if (Math.hypot(dx, dy) > 6) D.moved = true; redraw(); return; }
+    D.free = true; D.moved = false;
+  }
+  dragMove(D, p.x, p.y);
+}
+function penCut(path) {
+  let sx = 0; for (const q of path) sx += q.x;
+  const t = xToT(sx / path.length);
+  let y0 = Infinity, y1 = -Infinity; for (const q of path) { y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); }
+  const targets = P.clips.filter((c) => { const r = clipRect(c); return t > c.start + 0.005 && t < c.start + c.dur - 0.005 && r.y < y1 && r.y + r.h > y0; });
+  if (!targets.length) return false;
+  splitClips(targets, t); return true;
+}
+function penScratch(path) {
+  const hit = new Set();
+  for (let i = 0; i < path.length; i++) { const h = hitClip(path[i].x, path[i].y); if (h) hit.add(h.c.id); }
+  if (!hit.size) return;
+  S.sel = hit; deleteSel(); toast(hit.size > 1 ? `Удалено клипов: ${hit.size}` : 'Клип удалён', 1400);
+}
+function penUp(e) {
+  if (e.pointerId !== Pen.id) return;
+  const p = penPt(e); Pen.path.push(p); Pen.id = null;
+  const D = Drag.active, path = Pen.path; Drag.active = null; Pen.box = null;
+  if (!D) { redraw(); return; }
+  const quick = p.t - path[0].t < FLICK_MS * 1.6;
+  if (D.kind === 'scratch') { penScratch(path); Pen.path = []; redraw(); return; }
+  if (D.kind === 'move' && !D.free && D.moved) {
+    // quick vertical stroke that started on a clip: cut, never move
+    if (quick && isVStroke(path)) { penCut(path); Pen.path = []; Drag.snapX = null; redraw(); return; }
+    D.moved = false; // too short to mean anything: treat as a tap
+  }
+  if (D.kind === 'penEmpty') {
+    Pen.path = [];
+    if (!D.moved) { D.kind = 'empty'; endDrag(D); return; }
+    if (isVStroke(path)) { if (!penCut(path)) toast('Черта не задела ни одного клипа', 1600); redraw(); return; }
+    S.inspector = S.sel.size ? 'clip' : 'none'; renderInspector(); updateToolbar(); redraw(); return;
+  }
+  Pen.path = []; Drag.snapX = null;
+  endDrag(D);
+}
+function penHoverInfo(px, py) {
+  if (py < TOP) return null;
+  const h = hitClip(px, py); if (!h) return null;
+  const { c, r } = h, edge = Math.min(isTouch ? 18 : 9, r.w / 4);
+  const fiX = r.x + c.fin * S.pps, foX = r.x + r.w - c.fout * S.pps, fadeZone = py < r.y + 26;
+  if (fadeZone && S.sel.has(c.id) && Math.abs(px - fiX) < 16) return { r, fade: fiX };
+  if (fadeZone && S.sel.has(c.id) && Math.abs(px - foX) < 16) return { r, fade: foX };
+  if (px - r.x < edge) return { r, edge: r.x };
+  if (r.x + r.w - px < edge) return { r, edge: r.x + r.w - 3 };
+  return { r };
+}
+function drawPen(x) {
+  if (!S.pen) return;
+  const D = Drag.active;
+  if (Pen.box) { const b = Pen.box; x.fillStyle = 'rgba(120,180,255,.12)'; x.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); x.strokeStyle = 'rgba(140,190,255,.9)'; x.setLineDash([4, 3]); x.strokeRect(b.x0 + 0.5, b.y0 + 0.5, b.x1 - b.x0, b.y1 - b.y0); x.setLineDash([]); }
+  const ink = Pen.id != null && D && (D.kind === 'scratch' || (D.kind === 'penEmpty' && !Pen.box) || (D.kind === 'move' && !D.free));
+  if (ink && Pen.path.length > 1) {
+    const cut = D.kind !== 'scratch' && isVStroke(Pen.path);
+    x.strokeStyle = D.kind === 'scratch' ? 'rgba(255,90,80,.95)' : cut ? 'rgba(255,214,90,.95)' : 'rgba(255,255,255,.6)';
+    x.lineWidth = 2.5; x.lineCap = 'round'; x.lineJoin = 'round';
+    x.beginPath(); Pen.path.forEach((q, i) => (i ? x.lineTo(q.x, q.y) : x.moveTo(q.x, q.y))); x.stroke(); x.lineWidth = 1;
+    if (cut) { let sx = 0; for (const q of Pen.path) sx += q.x; const cxp = Math.round(sx / Pen.path.length); x.fillStyle = 'rgba(255,214,90,.9)'; x.fillRect(cxp, TOP, 1, Hh - TOP); }
+  }
+  const h = Pen.hover;
+  if (h && Pen.id == null) {
+    x.fillStyle = 'rgba(255,255,255,.45)'; x.fillRect(Math.round(h.x), RULER_H, 1, Hh - RULER_H);
+    const info = penHoverInfo(h.x, h.y);
+    if (info && info.edge != null) { x.fillStyle = 'rgba(255,214,90,.95)'; x.fillRect(info.edge, info.r.y, 3, info.r.h); }
+    if (info && info.fade != null) { x.strokeStyle = '#FFD65A'; x.lineWidth = 2; x.beginPath(); x.arc(info.fade, info.r.y + HEAD, 8, 0, Math.PI * 2); x.stroke(); x.lineWidth = 1; }
+    const txt = fmtTime(Math.max(0, xToT(h.x)));
+    x.font = '600 11px -apple-system, system-ui, sans-serif'; x.textBaseline = 'middle';
+    const tw = x.measureText(txt).width + 10, bx = clamp(h.x - tw / 2, 2, W - tw - 2);
+    x.fillStyle = 'rgba(20,22,24,.92)'; x.fillRect(bx, RULER_H + 2, tw, 17); x.fillStyle = '#fff'; x.fillText(txt, bx + 5, RULER_H + 10.5);
+  }
+}
+function setPenMode(on) {
+  S.pen = on; ls.set('pen', on); Pen.hover = null; Pen.id = null; updateToolbar(); redraw();
+  toast(on ? 'Режим Pencil: пальцы — прокрутка и зум, карандаш — монтаж. Быстрая черта сверху вниз — разрезать, зигзаг — удалить, протяжка по пустому — выделить' : 'Режим Pencil выключен — всё как раньше', on ? 5200 : 2000);
 }
 function seekTo(t) {
   P.playhead = Math.max(0, t);
@@ -1096,6 +1252,9 @@ function splitAt(t = P.playhead) {
   let targets = selClips().filter((c) => t > c.start + 0.005 && t < c.start + c.dur - 0.005);
   if (!targets.length) targets = P.clips.filter((c) => t > c.start + 0.005 && t < c.start + c.dur - 0.005);
   if (!targets.length) { toast('Под курсором нет клипа'); return; }
+  splitClips(targets, t);
+}
+function splitClips(targets, t) {
   const newSel = new Set();
   for (const c of targets) {
     const d = t - c.start;
@@ -1541,7 +1700,7 @@ function updateToolbar() {
   $('#bSnap').classList.toggle('on', S.snap);
   $('#bRipple').classList.toggle('on', S.ripple);
   const lb = $('#bLoop'); if (lb) lb.classList.toggle('on', !!(P.loop && P.loop.on && P.loop.e > P.loop.s));
-  $('#bStretch').classList.toggle('on', S.tool === 'stretch'); $('#bMulti').classList.toggle('on', !!S.multi);
+  $('#bStretch').classList.toggle('on', S.tool === 'stretch'); $('#bMulti').classList.toggle('on', !!S.multi); $('#bPen').classList.toggle('on', !!S.pen);
   $('#tl').style.cursor = S.tool === 'stretch' ? 'ew-resize' : '';
   $('#bUndo').disabled = S.hidx <= 0; $('#bRedo').disabled = S.hidx >= S.hist.length - 1;
   $('#projName').textContent = P.name;
@@ -2053,6 +2212,9 @@ function bindUI() {
   $('#bZin').onclick = () => zoom(1.5); $('#bZout').onclick = () => zoom(1 / 1.5); $('#bFit').onclick = zoomFit;
   $('#bExport').onclick = openExport; $('#bRao').onclick = openRao; $('#projName').onclick = openProjects;
   $('#bStretch').onclick = () => { S.tool = S.tool === 'stretch' ? 'edit' : 'stretch'; updateToolbar(); renderBar(); toast(S.tool === 'stretch' ? 'Растяжение: тяни клип за край — длина меняется вместе со скоростью' : 'Обычный монтаж', 2600); };
+  S.pen = ls.get('pen', false);
+  $('#bPen').onclick = () => setPenMode(!S.pen);
+  cv.addEventListener('pointerleave', (e) => { if (e.pointerType === 'pen' && Pen.hover) { Pen.hover = null; redraw(); } });
   $('#bMulti').onclick = () => { S.multi = !S.multi; updateToolbar(); toast(S.multi ? 'Мультивыбор: тапай клипы по очереди, потом «Склеить»' : 'Мультивыбор выключен', 2600); };
   $('#bCopy').onclick = () => copySel(); $('#bCut').onclick = cutSel; $('#bPaste').onclick = pasteClips;
   $('#bPresets').onclick = openPresets; $('#bConvert').onclick = openConverter; $('#bLoop').onclick = toggleLoop;
