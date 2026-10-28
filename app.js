@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.9.2';
+const APP_VERSION = '0.10.0';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -224,6 +224,7 @@ function commit() {
   S.hist = S.hist.slice(0, S.hidx + 1); S.hist.push(snap);
   if (S.hist.length > 150) S.hist.shift();
   S.hidx = S.hist.length - 1;
+  if (S.playing && T.g && P.clips.some((c) => !T.g.tracks[c.track])) restartPlayback(); // a clip landed on a track that had no graph
   scheduleSave(); updateToolbar();
 }
 function restore(i) {
@@ -420,7 +421,10 @@ async function buildGraph(ctx, live, ov = {}) {
   bus.out = ctx.createGain(); bus.dOut.connect(bus.out); bus.rOut.connect(bus.out);
   bus.post = delay(LAT.duck); bus.out.connect(bus.post); bus.post.connect(m.input);
   g.bus = bus;
+  // tracks with no clips get no processing at all (graph is rebuilt on every play/render)
+  const used = new Set(P.clips.map((c) => c.track));
   for (const t of P.tracks) {
+    if (!used.has(t.id)) continue;
     const n = { input: ctx.createGain(), eq: makeEQ(ctx), vol: ctx.createGain(), pan: ctx.createStereoPanner() };
     // MONO switch: stereo path and summed (L+R)/2 path, one of them open
     n.in2 = ctx.createGain(); n.inS = ctx.createGain(); n.inM = ctx.createGain();
@@ -456,7 +460,7 @@ async function buildGraph(ctx, live, ov = {}) {
     g.tracks[t.id] = n;
   }
   const mu = P.tracks.find((t) => t.kind === 'music');
-  if (mu) sc.connect(g.tracks[mu.id].duck, 0, 1);
+  if (mu && g.tracks[mu.id]) sc.connect(g.tracks[mu.id].duck, 0, 1);
   applyGraph(g, ov);
   return g;
 }
@@ -556,7 +560,7 @@ function gainAt(c, F, t) {
   if (t > c.dur - F.fout) g *= fadeShape((c.dur - t) / F.fout);
   return g;
 }
-function scheduleClips(g, from, to, t0) { return scheduleList(g.ctx, P.clips, from, to, t0, (c) => g.tracks[c.track].input); }
+function scheduleClips(g, from, to, t0) { return scheduleList(g.ctx, P.clips.filter((c) => g.tracks[c.track]), from, to, t0, (c) => g.tracks[c.track].input); }
 function scheduleList(ctx, clips, from, to, t0, destFor) {
   const srcs = [];
   for (const c of clips) {
@@ -1295,7 +1299,8 @@ async function renderLim(pre, len, limGain) {
 }
 // Stems: one render, every track (after its own FX, before the master chain) lands in its own channel pair
 async function renderStems(start, len, limGain) {
-  const stems = [...P.tracks.map((t) => ({ id: t.id, name: t.name })), { id: 'bus', name: 'Даблер и ревер' }];
+  const used = new Set(P.clips.filter((c) => c.start < start + len && c.start + c.dur > start).map((c) => c.track));
+  const stems = [...P.tracks.filter((t) => used.has(t.id)).map((t) => ({ id: t.id, name: t.name })), { id: 'bus', name: 'Даблер и ревер' }];
   const frames = Math.ceil(len * SR), off = VOICE_LAT + LAT.duck;
   const ctx = new OfflineAudioContext(stems.length * 2, frames + off + 64, SR);
   const g = await buildGraph(ctx, false, { limGain });
@@ -1586,22 +1591,36 @@ function renderTCP() {
     el('div', { class: 'tms' })));
   redraw();
 }
-// Extra tracks: plain tracks with an EQ only, mono or stereo, up to 5
-const MAX_EXTRA = 5;
+// Extra tracks: plain tracks (EQ only, mono/stereo, up to 5) and extra voice tracks (full voice chain + sends, up to 3)
+const MAX_EXTRA = 5, MAX_VOICE = 3;
 function openAddTrack() {
-  const extra = P.tracks.filter((t) => t.custom).length;
-  if (extra >= MAX_EXTRA) { toast(`Можно добавить не больше ${MAX_EXTRA} дорожек`); return; }
-  const add = (mono) => {
-    const n = P.tracks.filter((t) => t.custom).length;
-    let k = 1; while (P.tracks.some((t) => t.name === `TRACK ${k}`)) k++;
-    const t = { id: 't' + uid(), name: `TRACK ${k}`, kind: 'fx', custom: true, mono, color: EXTRA_COLORS[n % EXTRA_COLORS.length], vol: 0, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('fx') } };
-    P.tracks.push(t);
-    stop(false); commit(); closeModal(); resize(); toast(`Добавлена ${mono ? 'моно' : 'стерео'}-дорожка ${t.name}`);
+  const plain = P.tracks.filter((t) => t.custom && t.kind === 'fx').length;
+  const voices = P.tracks.filter((t) => t.custom && t.kind === 'voice').length;
+  const add = (type) => {
+    const n = P.tracks.filter((t) => t.custom).length, color = EXTRA_COLORS[n % EXTRA_COLORS.length];
+    let t;
+    if (type === 'voice') {
+      let k = 2; while (P.tracks.some((x) => x.name === `VOICE ${k}`)) k++;
+      t = { id: 't' + uid(), name: `VOICE ${k}`, kind: 'voice', custom: true, mono: true, color, vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('voice') }, vox: DEF.vox(-12), rcomp: DEF.rcomp(), la2a: DEF.la2a(), deess: DEF.deessVoice(), drive: { on: false, amount: 0 }, sends: DEF.sends() };
+      // copy the processing of the main VOICE track so the new voice sounds the same from the start
+      const main = P.tracks.find((x) => x.id === 'v1');
+      if (main) for (const k2 of ['declick', 'eq', 'vox', 'rcomp', 'la2a', 'deess', 'sends']) if (main[k2]) t[k2] = JSON.parse(JSON.stringify(main[k2]));
+      const last = P.tracks.map((x) => x.kind).lastIndexOf('voice');
+      P.tracks.splice(last + 1, 0, t);
+    } else {
+      let k = 1; while (P.tracks.some((x) => x.name === `TRACK ${k}`)) k++;
+      t = { id: 't' + uid(), name: `TRACK ${k}`, kind: 'fx', custom: true, mono: type === 'mono', color, vol: 0, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('fx') } };
+      P.tracks.push(t);
+    }
+    stop(false); commit(); closeModal(); resize();
+    toast(`Добавлена дорожка ${t.name}`);
   };
+  const vLeft = MAX_VOICE - voices, pLeft = MAX_EXTRA - plain;
   modal('Новая дорожка', el('div', { class: 'btns col' },
-    el('button', { class: 'btn big primary', onclick: () => add(true) }, 'Моно'),
-    el('button', { class: 'btn big', onclick: () => add(false) }, 'Стерео'),
-    el('p', { class: 'note' }, `Пустая дорожка с эквалайзером. На моно-дорожке всё, что кидаешь, сводится в один канал. Можно добавить ещё ${MAX_EXTRA - extra}. Двойной тап по названию — переименовать, «×» — удалить.`)));
+    el('button', { class: 'btn big primary', disabled: vLeft <= 0, onclick: () => add('voice') }, `Голос — вся голосовая обработка, посылы на даблер и ревер, музыка уступает (можно ещё ${vLeft})`),
+    el('button', { class: 'btn big', disabled: pLeft <= 0, onclick: () => add('mono') }, `Моно — пустая дорожка с эквалайзером (можно ещё ${pLeft})`),
+    el('button', { class: 'btn big', disabled: pLeft <= 0, onclick: () => add('stereo') }, `Стерео — пустая дорожка с эквалайзером`),
+    el('p', { class: 'note' }, 'Новый голос копирует обработку основного VOICE. Голос и моно-дорожки всё сводят в моно. Двойной тап по названию — переименовать, «×» — удалить.')));
 }
 function renameTrack(t) {
   const row = [...document.querySelectorAll('.tcp .tname')].find((b) => b.textContent === t.name); if (!row) return;
