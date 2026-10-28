@@ -1,6 +1,6 @@
 // Кэш приложения для работы без сети. Меняй VERSION при обновлении файлов.
-const VERSION = 'efir-0.1.0';
-const SHELL = ['./', 'index.html', 'app.js', 'dsp.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+const VERSION = 'efir-0.3.0';
+const SHELL = ['./', 'index.html', 'app.js', 'fx.js', 'dsp.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()));

@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.3.0';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -60,7 +60,9 @@ const ls = {
 };
 
 /* ================= Project model ================= */
-const TRACK_COLORS = { v1: '#F0B13C', v2: '#E7744E', mu: '#4DB6A8', fx: '#A595E6' };
+
+/* ================= Project model ================= */
+const TRACK_COLORS = { v1: '#D6A544', v2: '#D07454', mu: '#4BAE98', fx: '#9D90D8' };
 const eqBand = (type, f, g = 0, q = 1, on = true) => ({ type, f, g, q, on });
 function defaultEQ(kind) {
   if (kind === 'voice') return [eqBand('highpass', 80, 0, 0.71), eqBand('lowshelf', 180, 0), eqBand('peaking', 350, -2, 1.2), eqBand('peaking', 3200, 2, 1), eqBand('highshelf', 9000, 2), eqBand('lowpass', 18000, 0, 0.71, false)];
@@ -69,6 +71,24 @@ function defaultEQ(kind) {
   if (kind === 'master') return [eqBand('highpass', 30, 0, 0.71), eqBand('lowshelf', 120, 0), eqBand('peaking', 3000, 0, 1), eqBand('highshelf', 12000, 0)];
   return [eqBand('highpass', 40, 0, 0.71), eqBand('peaking', 1000, 0, 1), eqBand('highshelf', 10000, 0)];
 }
+// Opto/discrete compressor stepped controls
+const SH_RATIOS = [1.2, 2, 3, 4, 6, 20], SH_RATIO_L = ['1.2', '2', '3', '4', '6', 'FLOOD'];
+const SH_ATTS = [0.1, 0.5, 1, 5, 10, 30], SH_ATT_L = ['.1', '.5', '1', '5', '10', '30'];
+const SH_RECS = [0.1, 0.25, 0.5, 0.8, 1.2, -1], SH_REC_L = ['.1', '.25', '.5', '.8', '1.2', 'DUAL'];
+const DEF = {
+  declick: () => ({ on: true, amount: 3, quality: 1, only: false }),
+  vox: (comp = -12) => ({ on: true, gate: -80, comp, gain: 0 }),
+  deessVoice: () => ({ on: true, thr: -30, range: 4, f1: 5500, f2: 12000, mode: 'vocal', band: 'split', link: 100, look: 5 }),
+  deessMaster: () => ({ on: true, thr: -10, range: 6, f1: 2000, f2: 2974, mode: 'allround', band: 'wide', link: 100, look: 12 }),
+  drive: (a = 0) => ({ on: a > 0, amount: a }),
+  duck: () => ({ on: true, depth: 8, sens: 6, attack: 10, release: 150, lo: 150, hi: 8000 }),
+  mbBand: () => ({ on: true, lThr: 0, lRatio: 10, lAtt: 20, lRel: 100, cThr: -22.8, cRatio: 2, cAtt: 20, cRel: 60, gain: 0, mix: 100 }),
+  mb: () => ({ on: true, xo: [100, 580, 4500], bands: [0, 1, 2, 3].map(() => DEF.mbBand()) }),
+  sh: () => ({ on: true, oOn: true, oThr: 9, oGain: 7, dOn: true, dThr: 9, dRatio: 2, dAtt: 5, dRec: 0, dGain: 7, xf: 0, mix: 100 }),
+  lim: () => ({ thresh: -4, ceiling: -1, release: 80, arc: true }),
+};
+const shThrDb = (v) => -2 - v * 1.2;
+const shGainDb = (v) => v * 0.5;
 function makeRegionSet(start, variant) {
   const out = []; let t = start;
   for (const len of [30, 15, 10, 5]) {
@@ -78,25 +98,61 @@ function makeRegionSet(start, variant) {
   return out;
 }
 function newProject(name = 'Новый ролик') {
+  const p = baseProject(name);
+  const def = Presets.getDefault();
+  if (def) applyPresetTo(p, def);
+  return p;
+}
+function baseProject(name) {
   return {
-    id: uid(), name, created: Date.now(), updated: Date.now(), v: 1,
+    id: uid(), name, created: Date.now(), updated: Date.now(), v: 2,
     tracks: [
-      { id: 'v1', name: 'Голос', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, eq: defaultEQ('voice'), rvox: { on: true, amount: 5, gain: 0 }, drive: 0 },
-      { id: 'v2', name: 'Голос радио', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, eq: defaultEQ('radio'), rvox: { on: true, amount: 6, gain: 0 }, drive: 0.35 },
-      { id: 'mu', name: 'Музыка', kind: 'music', vol: -6, pan: 0, mute: false, solo: false, eq: defaultEQ('music'), duck: { on: true, depth: 8, sens: 6, attack: 10, release: 150, lo: 150, hi: 8000 } },
-      { id: 'fx', name: 'Эффекты', kind: 'fx', vol: 0, pan: 0, mute: false, solo: false, eq: defaultEQ('fx') },
+      { id: 'v1', name: 'Голос', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('voice') }, vox: DEF.vox(-12), deess: DEF.deessVoice(), drive: DEF.drive(0) },
+      { id: 'v2', name: 'Голос радио', kind: 'voice', vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('radio') }, vox: DEF.vox(-15), deess: DEF.deessVoice(), drive: DEF.drive(0.35) },
+      { id: 'mu', name: 'Музыка', kind: 'music', vol: -12, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('music') }, duck: DEF.duck() },
+      { id: 'fx', name: 'Эффекты', kind: 'fx', vol: 0, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('fx') } },
     ],
-    master: {
-      eq: defaultEQ('master'),
-      comp: { on: true, thresh: -10, ratio: 4, attack: 10, release: 0.3, makeup: 0 },
-      lim: { gain: 4, ceiling: -1, release: 80 },
-      autoRms: true, targetRms: -10.5, fades: true, format: 'wav',
-    },
+    master: { mb: DEF.mb(), eq: { on: true, bands: defaultEQ('master') }, deess: DEF.deessMaster(), sh: DEF.sh(), lim: DEF.lim(), autoRms: true, targetRms: -10.5, fades: true, format: 'wav' },
     clips: [], regions: makeRegionSet(0, 1), files: {}, playhead: 0,
   };
 }
+// Bring projects saved by 0.1 up to the current structure
+function migrate(p) {
+  if ((p.v || 1) >= 2) return p;
+  for (const t of p.tracks) {
+    if (Array.isArray(t.eq)) t.eq = { on: true, bands: t.eq };
+    if (t.kind === 'voice') {
+      t.declick = t.declick || DEF.declick();
+      if (!t.vox) { t.vox = DEF.vox(t.rvox ? -(t.rvox.amount ?? 5) * 2.4 : -12); if (t.rvox) { t.vox.on = t.rvox.on; t.vox.gain = t.rvox.gain || 0; } }
+      delete t.rvox;
+      t.deess = t.deess || DEF.deessVoice();
+      if (typeof t.drive !== 'object' || t.drive === null) t.drive = DEF.drive(+t.drive || 0);
+    }
+    if (t.kind === 'music') t.duck = t.duck || DEF.duck();
+  }
+  const m = p.master;
+  if (Array.isArray(m.eq)) m.eq = { on: true, bands: m.eq };
+  m.mb = m.mb || DEF.mb(); m.deess = m.deess || DEF.deessMaster(); m.sh = m.sh || DEF.sh();
+  if (!m.lim || m.lim.thresh == null) m.lim = { ...DEF.lim(), ceiling: m.lim?.ceiling ?? -1, release: m.lim?.release ?? 80, thresh: -(m.lim?.gain ?? 4) };
+  delete m.comp;
+  if (m.targetRms == null) m.targetRms = -10.5;
+  if (m.autoRms == null) m.autoRms = true;
+  if (m.fades == null) m.fades = true;
+  m.format = m.format || 'wav';
+  p.v = 2;
+  return p;
+}
+// FX chains in processing order (shown like Reaper's FX chain)
+const FX_NAMES = { declick: 'De-crackle', eq: 'Parametric EQ', vox: 'Vocal Leveler', deess: 'De-Esser', drive: 'Saturation', duck: 'Spectral Ducker', mb: 'Multiband Dynamics', sh: 'Opto/Discrete Comp', lim: 'Maximizer', stats: 'Audio Statistics' };
+function chainFor(t) {
+  if (t === 'master') return ['mb', 'eq', 'deess', 'sh', 'lim', 'stats'];
+  if (t.kind === 'voice') return ['declick', 'eq', 'vox', 'deess', 'drive'];
+  if (t.kind === 'music') return ['eq', 'duck'];
+  return ['eq'];
+}
+const targetObj = (id) => (id === 'master' ? P.master : P.tracks.find((t) => t.id === id));
+const fxOn = (obj, key) => (key === 'stats' || key === 'lim' ? true : obj[key] && obj[key].on !== false);
 
-/* ================= App state ================= */
 let P = null;                 // current project
 const buffers = new Map();    // fileId -> { buf, peaks }
 const S = {
@@ -157,6 +213,18 @@ async function ensureBuffer(fileId) {
   buffers.set(fileId, entry);
   return entry;
 }
+const VOICE_TARGET_RMS = -20;
+function voiceAutoGain(buf) {
+  // RMS of the active (non-silent) 50 ms blocks only, so pauses don't skew it
+  const a = buf.getChannelData(0), b = buf.numberOfChannels > 1 ? buf.getChannelData(1) : a, blk = Math.round(buf.sampleRate * 0.05);
+  const blocks = [];
+  for (let i = 0; i + blk <= a.length; i += blk) { let s = 0; for (let j = i; j < i + blk; j++) { const v = (a[j] + b[j]) * 0.5; s += v * v; } blocks.push(s / blk); }
+  if (!blocks.length) return 0;
+  const loud = Math.max(...blocks), act = blocks.filter((x) => x > loud * 0.001);
+  const rms = 10 * Math.log10(act.reduce((x, y) => x + y, 0) / act.length + 1e-20);
+  if (!isFinite(rms) || rms < -80) return 0;
+  return Math.round(clamp(VOICE_TARGET_RMS - rms, -24, 24) * 10) / 10;
+}
 async function importFiles(files, trackId, at) {
   let t = at;
   for (const f of files) {
@@ -167,7 +235,10 @@ async function importFiles(files, trackId, at) {
       await Store.put('blobs', fileId, f);
       buffers.set(fileId, { buf, peaks: computePeaks(buf) });
       P.files[fileId] = { name: f.name, size: f.size, dur: buf.duration };
-      const clip = { id: uid(), track: trackId, src: fileId, name: f.name.replace(/\.[^.]+$/, ''), start: t, offset: 0, dur: buf.duration, gain: 0, fin: 0.005, fout: 0.005 };
+      const tr = P.tracks.find((k) => k.id === trackId);
+      // raw voice comes in at any level: bring the spoken parts to about -20 dBFS RMS so the mix starts balanced
+      const gain = tr && tr.kind === 'voice' ? voiceAutoGain(buf) : 0;
+      const clip = { id: uid(), track: trackId, src: fileId, name: f.name.replace(/\.[^.]+$/, ''), start: t, offset: 0, dur: buf.duration, gain, fin: 0.005, fout: 0.005 };
       P.clips.push(clip);
       S.sel = new Set([clip.id]);
       t += buf.duration;
@@ -180,7 +251,7 @@ async function importFiles(files, trackId, at) {
 }
 
 /* ================= DSP graph ================= */
-let actx = null, workletReady = new WeakMap(), COMP_DELAY = 0.006;
+let actx = null, workletReady = new WeakMap();
 function getCtx() {
   if (!actx) {
     try { actx = new AudioContext({ sampleRate: SR, latencyHint: 'playback' }); } catch { actx = new AudioContext(); }
@@ -189,119 +260,152 @@ function getCtx() {
   return actx;
 }
 async function ensureWorklet(ctx) {
-  if (!workletReady.has(ctx)) workletReady.set(ctx, ctx.audioWorklet.addModule('dsp.js'));
+  if (!workletReady.has(ctx)) workletReady.set(ctx, ctx.audioWorklet.addModule('dsp.js?v=' + APP_VERSION));
   await workletReady.get(ctx);
 }
-// Measure DynamicsCompressor pre-delay of this browser once, so tracks stay aligned.
-async function measureCompDelay() {
-  try {
-    const c = new OfflineAudioContext(1, 2048, SR);
-    const b = c.createBuffer(1, 2048, SR); b.getChannelData(0)[10] = 0.5;
-    const s = c.createBufferSource(); s.buffer = b;
-    const k = c.createDynamicsCompressor(); k.threshold.value = 0; k.ratio.value = 1;
-    s.connect(k).connect(c.destination); s.start();
-    const out = (await c.startRendering()).getChannelData(0);
-    let mi = 0; for (let i = 0; i < out.length; i++) if (Math.abs(out[i]) > Math.abs(out[mi])) mi = i;
-    COMP_DELAY = Math.max(0, (mi - 10) / SR);
-  } catch (e) { console.warn('comp delay', e); }
-}
-const DUCK_N = 1024, LIM_LA = 69;
-const latency = () => DUCK_N / SR + COMP_DELAY * 2 + LIM_LA / SR;
+// Fixed processing latencies in samples (must match dsp.js)
+const LAT = { declick: 64, deess: 720, duck: 1024, lim: 69 };
+const VOICE_LAT = LAT.declick + LAT.deess;
+const TOTAL_LAT = VOICE_LAT + LAT.duck + LAT.deess + LAT.lim;
+const latency = (ctx) => TOTAL_LAT / (ctx ? ctx.sampleRate : SR);
 
 function setBand(node, b) {
   if (!b || !b.on) { node.type = 'peaking'; node.gain.value = 0; node.frequency.value = 1000; node.Q.value = 1; return; }
   node.type = b.type;
-  node.frequency.value = clamp(b.f, 10, SR / 2 - 100);
+  node.frequency.value = clamp(b.f, 10, 22000);
   node.gain.value = b.type === 'highpass' || b.type === 'lowpass' ? 0 : b.g;
   node.Q.value = b.type === 'highpass' || b.type === 'lowpass' ? 20 * Math.log10(Math.max(0.1, b.q)) : Math.max(0.1, b.q);
 }
 const MAXB = 8;
 function makeEQ(ctx) { const n = []; for (let i = 0; i < MAXB; i++) n.push(ctx.createBiquadFilter()); for (let i = 1; i < MAXB; i++) n[i - 1].connect(n[i]); return n; }
+function applyEQ(nodes, eq) { for (let i = 0; i < MAXB; i++) setBand(nodes[i], eq.on ? eq.bands[i] : null); }
 function driveCurve(d) {
   if (!d) return null;
   const k = 1 + d * 9, n = 2048, c = new Float32Array(n), norm = Math.tanh(k);
   for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; c[i] = Math.tanh(k * x) / norm; }
   return c;
 }
-const sslMakeupComp = (t, r) => 0.6 * t * (1 - 1 / r); // cancels the built-in auto make-up of DynamicsCompressor
+// Parameters sent to each processor
+const PR = {
+  declick: (t) => ({ ...t.declick }),
+  vox: (t) => ({ ...t.vox }),
+  deess: (d) => ({ ...d, link: d.link / 100 }),
+  duck: (t) => ({ ...t.duck }),
+  mb: (m) => ({ on: m.mb.on, xo: m.mb.xo.slice(), bands: m.mb.bands.map((b) => ({ ...b })) }),
+  sh: (m) => {
+    const s = m.sh;
+    return { on: s.on, oOn: s.oOn, oThr: shThrDb(s.oThr), oGain: shGainDb(s.oGain), dOn: s.dOn, dThr: shThrDb(s.dThr), dRatio: SH_RATIOS[s.dRatio], dAtt: SH_ATTS[s.dAtt], dRec: SH_RECS[s.dRec], dGain: shGainDb(s.dGain), xf: s.xf, mix: s.mix / 100 };
+  },
+  lim: (m, ov = {}) => ({ gain: ov.limGain ?? -m.lim.thresh, ceiling: m.lim.ceiling, release: m.lim.release, arc: m.lim.arc }),
+};
 
-async function buildGraph(ctx, live, overrides = {}) {
+async function buildGraph(ctx, live, ov = {}) {
   await ensureWorklet(ctx);
-  const g = { ctx, tracks: {}, live };
-  // master
-  const m = {};
+  const sr = ctx.sampleRate;
+  const W = (name, p, key, ins = 1) => {
+    const n = new AudioWorkletNode(ctx, name, { numberOfInputs: ins, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { p } });
+    if (live && key) n.port.onmessage = (e) => { Meter.gr[key] = e.data; };
+    return n;
+  };
+  const delay = (samples) => { const d = ctx.createDelay(1); d.delayTime.value = samples / sr; return d; };
+  const an = () => { const a = ctx.createAnalyser(); a.fftSize = 4096; a.smoothingTimeConstant = 0.75; return a; };
+  const g = { ctx, tracks: {}, live, workers: [] };
+  const M = P.master, m = {};
   m.input = ctx.createGain();
+  m.mb = W('efir-mb', PR.mb(M), 'master.mb');
   m.eq = makeEQ(ctx);
-  m.comp = ctx.createDynamicsCompressor();
-  m.mk = ctx.createGain();
-  const LM = P.master.lim;
-  m.lim = new AudioWorkletNode(ctx, 'efir-limiter', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { p: { gain: overrides.limGain ?? LM.gain, ceiling: LM.ceiling, release: LM.release } } });
-  m.input.connect(m.eq[0]); m.eq[MAXB - 1].connect(m.comp); m.comp.connect(m.mk); m.mk.connect(m.lim); m.lim.connect(ctx.destination);
+  m.deess = W('efir-deess', PR.deess(M.deess), 'master.deess');
+  m.sh = W('efir-sh', PR.sh(M), 'master.sh');
+  m.lim = W('efir-limiter', PR.lim(M, ov), 'master.lim');
+  m.input.connect(m.mb); m.mb.connect(m.eq[0]); m.eq[MAXB - 1].connect(m.deess); m.deess.connect(m.sh); m.sh.connect(m.lim); m.lim.connect(ctx.destination);
+  g.workers.push(m.mb, m.deess, m.sh, m.lim);
   if (live) {
+    m.anIn = an(); m.input.connect(m.anIn);
+    m.anEq = an(); m.eq[MAXB - 1].connect(m.anEq);
     m.split = ctx.createChannelSplitter(2);
     m.anL = ctx.createAnalyser(); m.anR = ctx.createAnalyser(); m.anL.fftSize = m.anR.fftSize = 2048;
     m.lim.connect(m.split); m.split.connect(m.anL, 0); m.split.connect(m.anR, 1);
-    m.lim.port.onmessage = (e) => { Meter.limGr = e.data.gr; };
   }
   g.master = m;
-  // sidechain bus for voices
   const sc = ctx.createGain();
   for (const t of P.tracks) {
     const n = { input: ctx.createGain(), eq: makeEQ(ctx), vol: ctx.createGain(), pan: ctx.createStereoPanner() };
-    n.input.connect(n.eq[0]);
-    let last = n.eq[MAXB - 1];
     if (t.kind === 'voice') {
+      n.declick = W('efir-declick', PR.declick(t), t.id + '.declick');
+      n.vox = W('efir-vox', PR.vox(t), t.id + '.vox');
+      n.deess = W('efir-deess', PR.deess(t.deess), t.id + '.deess');
       n.drive = ctx.createWaveShaper(); n.drive.oversample = '4x';
-      n.comp = ctx.createDynamicsCompressor(); n.out = ctx.createGain();
-      last.connect(n.drive); n.drive.connect(n.comp); n.comp.connect(n.out); n.out.connect(n.vol);
+      n.input.connect(n.declick); n.declick.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vox); n.vox.connect(n.deess); n.deess.connect(n.drive); n.drive.connect(n.vol);
       n.vol.connect(n.pan);
-      n.delay = ctx.createDelay(1); n.delay.delayTime.value = DUCK_N / SR;
-      n.pan.connect(n.delay); n.delay.connect(m.input);
+      n.post = delay(LAT.duck); n.pan.connect(n.post); n.post.connect(m.input);
       n.pan.connect(sc);
+      g.workers.push(n.declick, n.vox, n.deess);
     } else if (t.kind === 'music') {
-      n.pre = ctx.createDelay(1); n.pre.delayTime.value = COMP_DELAY;
-      last.connect(n.vol); n.vol.connect(n.pan); n.pan.connect(n.pre);
-      n.duck = new AudioWorkletNode(ctx, 'efir-ducker', { numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { p: { ...t.duck } } });
-      n.pre.connect(n.duck, 0, 0);
-      n.duck.connect(m.input);
-      if (live) n.duck.port.onmessage = (e) => { Meter.duckGr = e.data.gr; };
+      n.input.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vol); n.vol.connect(n.pan);
+      n.pre = delay(VOICE_LAT); n.pan.connect(n.pre);
+      n.duck = W('efir-ducker', PR.duck(t), t.id + '.duck', 2);
+      n.pre.connect(n.duck, 0, 0); n.duck.connect(m.input);
+      g.workers.push(n.duck);
     } else {
-      n.delay = ctx.createDelay(1); n.delay.delayTime.value = DUCK_N / SR + COMP_DELAY;
-      last.connect(n.vol); n.vol.connect(n.pan); n.pan.connect(n.delay); n.delay.connect(m.input);
+      n.input.connect(n.eq[0]); n.eq[MAXB - 1].connect(n.vol); n.vol.connect(n.pan);
+      n.post = delay(VOICE_LAT + LAT.duck); n.pan.connect(n.post); n.post.connect(m.input);
     }
+    if (live) { n.an = an(); n.eq[MAXB - 1].connect(n.an); }
     g.tracks[t.id] = n;
   }
   const mu = P.tracks.find((t) => t.kind === 'music');
   if (mu) sc.connect(g.tracks[mu.id].duck, 0, 1);
-  applyGraph(g, overrides);
+  applyGraph(g, ov);
   return g;
 }
-function applyGraph(g, overrides = {}) {
+function applyGraph(g, ov = {}) {
   const anySolo = P.tracks.some((t) => t.solo);
   for (const t of P.tracks) {
     const n = g.tracks[t.id]; if (!n) continue;
-    for (let i = 0; i < MAXB; i++) setBand(n.eq[i], t.eq[i]);
+    applyEQ(n.eq, t.eq);
     const audible = !t.mute && (!anySolo || t.solo);
     n.vol.gain.value = audible ? dbToLin(t.vol) : 0;
     n.pan.pan.value = t.pan || 0;
     if (t.kind === 'voice') {
-      n.drive.curve = driveCurve(t.drive);
-      const a = t.rvox.on ? t.rvox.amount : 0;
-      n.comp.threshold.value = -3 * a; n.comp.ratio.value = a > 0 ? 4 : 1; n.comp.knee.value = 8;
-      n.comp.attack.value = 0.003; n.comp.release.value = 0.12;
-      n.out.gain.value = dbToLin(t.rvox.on ? t.rvox.gain : 0);
+      n.declick.port.postMessage(PR.declick(t));
+      n.vox.port.postMessage(PR.vox(t));
+      n.deess.port.postMessage(PR.deess(t.deess));
+      n.drive.curve = t.drive.on ? driveCurve(t.drive.amount) : null;
     }
-    if (t.kind === 'music') n.duck.port.postMessage({ ...t.duck });
+    if (t.kind === 'music') n.duck.port.postMessage(PR.duck(t));
   }
   const M = P.master, m = g.master;
-  for (let i = 0; i < MAXB; i++) setBand(m.eq[i], M.eq[i]);
-  const c = M.comp, thr = c.on ? c.thresh : 0, ratio = c.on ? c.ratio : 1;
-  m.comp.threshold.value = thr; m.comp.ratio.value = ratio; m.comp.knee.value = 2;
-  m.comp.attack.value = c.attack / 1000; m.comp.release.value = c.release;
-  m.mk.gain.value = dbToLin((c.on ? c.makeup : 0) + sslMakeupComp(thr, ratio));
-  m.lim.port.postMessage({ gain: overrides.limGain ?? M.lim.gain, ceiling: M.lim.ceiling, release: M.lim.release });
+  m.mb.port.postMessage(PR.mb(M));
+  applyEQ(m.eq, M.eq);
+  m.deess.port.postMessage(PR.deess(M.deess));
+  m.sh.port.postMessage(PR.sh(M));
+  m.lim.port.postMessage(PR.lim(M, ov));
+}
+function killGraph(g) {
+  for (const w of g.workers) { try { w.port.postMessage({ dead: true }); w.disconnect(); } catch {} }
 }
 
+// Clip gain: equal-power fade shapes; overlaps on the same track become crossfades automatically
+const fadeShape = (x) => Math.sin(clamp(x, 0, 1) * Math.PI / 2);
+function effFades(c) {
+  let xin = 0, xout = 0;
+  const ce = c.start + c.dur;
+  for (const o of P.clips) {
+    if (o === c || o.track !== c.track) continue;
+    const oe = o.start + o.dur;
+    if (o.start < c.start - 1e-6 && oe > c.start + 1e-6 && oe < ce + 1e-6) xin = Math.max(xin, oe - c.start);
+    else if (o.start > c.start + 1e-6 && o.start < ce - 1e-6 && oe > ce - 1e-6) xout = Math.max(xout, ce - o.start);
+  }
+  let fin = Math.max(c.fin, xin), fout = Math.max(c.fout, xout);
+  if (fin + fout > c.dur) { const k = c.dur / (fin + fout); fin *= k; fout *= k; }
+  return { fin, fout, xin, xout };
+}
+function gainAt(c, F, t) {
+  let g = 1;
+  if (t < F.fin) g *= fadeShape(t / F.fin);
+  if (t > c.dur - F.fout) g *= fadeShape((c.dur - t) / F.fout);
+  return g;
+}
 function scheduleClips(g, from, to, t0) {
   const ctx = g.ctx, srcs = [];
   for (const c of P.clips) {
@@ -310,13 +414,16 @@ function scheduleClips(g, from, to, t0) {
     if (ce <= from || cs >= to) continue;
     const a = Math.max(from, cs), b = Math.min(to, ce);
     const s = ctx.createBufferSource(); s.buffer = e.buf;
-    const gn = ctx.createGain();
-    const lin = dbToLin(c.gain);
+    const gn = ctx.createGain(), lin = dbToLin(c.gain), F = effFades(c);
     const rel0 = a - cs, rel1 = b - cs, when = t0 + (a - from);
-    const pts = [[0, 0], [c.fin, 1], [c.dur - c.fout, 1], [c.dur, 0]].map(([t, v]) => [clamp(t, 0, c.dur), v]);
-    const valAt = (t) => { for (let i = 1; i < pts.length; i++) if (t <= pts[i][0]) { const [t0_, v0] = pts[i - 1], [t1, v1] = pts[i]; return t1 - t0_ < 1e-6 ? v1 : v0 + (v1 - v0) * (t - t0_) / (t1 - t0_); } return 0; };
-    gn.gain.setValueAtTime(valAt(rel0) * lin, when);
-    for (const [t, v] of pts) if (t > rel0 && t <= rel1) gn.gain.linearRampToValueAtTime(v * lin, when + (t - rel0));
+    gn.gain.value = gainAt(c, F, rel0) * lin;
+    for (const [x0, x1] of [[0, F.fin], [c.dur - F.fout, c.dur]]) {
+      const s0 = Math.max(x0, rel0), s1 = Math.min(x1, rel1);
+      if (s1 - s0 < 0.003) continue;
+      const n = 48, curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) curve[i] = gainAt(c, F, s0 + (s1 - s0) * i / (n - 1)) * lin;
+      try { gn.gain.setValueCurveAtTime(curve, when + (s0 - rel0), s1 - s0 - 0.0005); } catch (err) { console.warn(err); }
+    }
     s.connect(gn); gn.connect(g.tracks[c.track].input);
     s.start(when, c.offset + rel0, rel1 - rel0);
     srcs.push(s);
@@ -336,7 +443,7 @@ async function play(from = P.playhead, stopAt = Infinity) {
   T.from = from; T.returnTo = from; T.t0 = ctx.currentTime + 0.08;
   T.stopAt = Math.min(stopAt, projectEnd() + 0.5);
   T.srcs = scheduleClips(T.g, from, Infinity, T.t0);
-  S.playing = true; Meter.reset(); updateToolbar(); loop();
+  S.playing = true; Meter.reset(); updateToolbar(); redraw();
 }
 function stop(returnHead = true) {
   for (const s of T.srcs) { try { s.stop(); } catch {} }
@@ -346,21 +453,17 @@ function stop(returnHead = true) {
   if (S.playing && returnHead) P.playhead = T.returnTo;
   S.playing = false; updateToolbar(); redraw();
 }
-function killGraph(g) {
-  try { g.master.lim.port.postMessage({ dead: true }); g.master.lim.disconnect(); } catch {}
-  for (const n of Object.values(g.tracks)) if (n.duck) try { n.duck.port.postMessage({ dead: true }); n.duck.disconnect(); } catch {}
-}
 function transportTime() {
   if (!S.playing) return P.playhead;
-  return T.from + Math.max(0, actx.currentTime - T.t0 - latency() - (actx.outputLatency || 0));
+  return T.from + Math.max(0, actx.currentTime - T.t0 - latency(actx) - (actx.outputLatency || 0));
 }
 const togglePlay = () => (S.playing ? stop() : play());
 function applyLive() { if (T.g) applyGraph(T.g); }
 
 /* ================= Meters ================= */
 const Meter = {
-  limGr: 0, duckGr: 0, sumSq: 0, n: 0, win: [], pkL: 0, pkR: 0, hold: -99,
-  reset() { this.sumSq = 0; this.n = 0; this.win = []; this.hold = -99; this.limGr = 0; this.duckGr = 0; },
+  gr: {}, sumSq: 0, n: 0, win: [], pkL: 0, pkR: 0, hold: -99, maxPk: -99,
+  reset() { this.sumSq = 0; this.n = 0; this.win = []; this.hold = -99; this.maxPk = -99; this.gr = {}; },
   buf: new Float32Array(2048),
   tick() {
     if (!T.g || !T.g.master.anL) return;
@@ -368,64 +471,80 @@ const Meter = {
     const read = (an) => { an.getFloatTimeDomainData(this.buf); let pk = 0, sq = 0; for (let i = 2048 - take; i < 2048; i++) { const v = this.buf[i]; sq += v * v; const a = Math.abs(v); if (a > pk) pk = a; } return [pk, sq]; };
     const [pl, sl] = read(T.g.master.anL), [pr, sr] = read(T.g.master.anR);
     const sq = (sl + sr) / 2;
-    this.pkL = Math.max(pl, this.pkL * 0.92); this.pkR = Math.max(pr, this.pkR * 0.92);
-    this.hold = Math.max(this.hold, linToDb(Math.max(pl, pr)));
+    this.pkL = Math.max(pl, this.pkL * 0.9); this.pkR = Math.max(pr, this.pkR * 0.9);
+    const pk = linToDb(Math.max(pl, pr));
+    this.hold = Math.max(this.hold, pk); this.maxPk = Math.max(this.maxPk, pk);
     if (sq > 0) { this.sumSq += sq; this.n += take; }
     this.win.push([sq, take]); if (this.win.length > 180) this.win.shift();
   },
   rmsShort() { let s = 0, n = 0; for (const [a, b] of this.win) { s += a; n += b; } return n ? 10 * Math.log10(s / n + 1e-20) : -Infinity; },
   rmsInt() { return this.n ? 10 * Math.log10(this.sumSq / this.n + 1e-20) : -Infinity; },
+  limGr() { return this.gr['master.lim'] ? this.gr['master.lim'].gr : 0; },
 };
-function drawMeter() {
-  const c = $('#meter'); if (!c) return;
+function drawBarMeter(c, vertical) {
+  if (!c || !c.isConnected) return;
   const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
-  if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  if (!w || !h) return;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
   const x = c.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, w, h);
-  const scale = (db) => clamp((db + 48) / 48, 0, 1);
-  const bars = [Meter.pkL, Meter.pkR];
-  bars.forEach((pk, i) => {
-    const y = 3 + i * 8, v = scale(linToDb(pk));
-    x.fillStyle = 'rgba(255,255,255,.07)'; x.fillRect(0, y, w, 5);
-    const grd = x.createLinearGradient(0, 0, w, 0); grd.addColorStop(0, '#4DB6A8'); grd.addColorStop(0.75, '#F0B13C'); grd.addColorStop(0.97, '#FF5A47');
-    x.fillStyle = grd; x.fillRect(0, y, w * v, 5);
+  const scale = (db) => clamp((db + 60) / 60, 0, 1);
+  const vals = S.playing ? [Meter.pkL, Meter.pkR] : [0, 0];
+  const len = vertical ? h : w, th = vertical ? (w - 6) / 2 : (h - 4) / 2;
+  vals.forEach((pk, i) => {
+    const v = scale(linToDb(pk)) * len;
+    x.fillStyle = '#1b1c1d';
+    vertical ? x.fillRect(i * (th + 2), 0, th, h) : x.fillRect(0, i * (th + 2), w, th);
+    const grd = vertical ? x.createLinearGradient(0, h, 0, 0) : x.createLinearGradient(0, 0, w, 0);
+    grd.addColorStop(0, '#2f9e5b'); grd.addColorStop(0.8, '#8fcf3f'); grd.addColorStop(0.95, '#e6c33a'); grd.addColorStop(1, '#e8483a');
+    x.fillStyle = grd;
+    vertical ? x.fillRect(i * (th + 2), h - v, th, v) : x.fillRect(0, i * (th + 2), v, th);
   });
-  x.fillStyle = 'rgba(255,255,255,.35)'; x.fillRect(w * scale(-1) - 0.5, 0, 1, 19);
-  $('#mRms').textContent = S.playing ? fmtDb(Meter.rmsShort()) : '—';
-  $('#mRmsI').textContent = S.playing ? fmtDb(Meter.rmsInt()) : '—';
-  $('#mPk').textContent = S.playing && Meter.hold > -99 ? fmtDb(Meter.hold) : '—';
-  $('#mGr').textContent = S.playing ? (Meter.limGr > 0.05 ? '−' + Meter.limGr.toFixed(1) : '0.0') : '—';
-  const dg = $('#duckGr'); if (dg) dg.style.width = S.playing ? clamp(Meter.duckGr / 18, 0, 1) * 100 + '%' : '0%';
-  const sslGr = $('#sslGr'); if (sslGr) sslGr.textContent = S.playing && T.g ? fmtDb(T.g.master.comp.reduction) : '—';
-  const limGrI = $('#limGrI'); if (limGrI) limGrI.textContent = S.playing ? '−' + Meter.limGr.toFixed(1) : '—';
-  const duckGrI = $('#duckGrI'); if (duckGrI) duckGrI.textContent = S.playing ? '−' + Meter.duckGr.toFixed(1) : '—';
+  if (vertical) {
+    x.fillStyle = 'rgba(255,255,255,.55)'; x.font = '9px ui-monospace, Menlo, monospace'; x.textAlign = 'right';
+    for (const d of [0, -6, -12, -18, -24, -36, -48]) { const y = h - scale(d) * h; x.fillRect(w - 4, y, 4, 1); x.fillText(String(d), w - 6, Math.max(8, y + 3)); }
+  } else { x.fillStyle = 'rgba(255,255,255,.6)'; x.fillRect(w * scale(-1), 0, 1, h); }
+}
+function updateMeterText() {
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  set('mRms', S.playing ? fmtDb(Meter.rmsShort()) : '—');
+  set('mRmsI', S.playing ? fmtDb(Meter.rmsInt()) : '—');
+  set('mPk', S.playing && Meter.hold > -99 ? fmtDb(Meter.hold) : '—');
+  set('mGr', S.playing ? '−' + Meter.limGr().toFixed(1) : '—');
+  const d = Meter.gr['mu.duck'], dg = document.getElementById('duckGr');
+  if (dg) dg.style.width = S.playing && d ? clamp(d.gr / 18, 0, 1) * 100 + '%' : '0%';
 }
 
-/* ================= Timeline geometry ================= */
-const RULER_H = 26, REG_H = 26, TOP = RULER_H + REG_H;
+/* ================= Timeline (Reaper-style arrange view) ================= */
+const RULER_H = 30, REG_H = 20, TOP = RULER_H + REG_H;
 let cv, cx, W = 0, Hh = 0, laneH = 80;
 const tToX = (t) => (t - S.x0) * S.pps;
 const xToT = (x) => S.x0 + x / S.pps;
 const trackIndex = (id) => P.tracks.findIndex((t) => t.id === id);
 const laneY = (i) => TOP + i * laneH;
+const C = {
+  arr: '#2E3031', lane: '#323435', lane2: '#2D2F30', grid: 'rgba(255,255,255,.05)', grid2: 'rgba(255,255,255,.09)',
+  ruler: '#232425', rulerTxt: '#A9AEAF', regLane: '#26282A', region: '#3E8C78', regionSel: '#5FC0A5',
+  item: '#8E9896', itemSel: '#B9C3C1', itemHead: '#6E7876', itemHeadSel: '#97A3A0', wave: '#1C1F20', edit: '#62D6B9', play: '#F1F3F3',
+};
 
 function resize() {
   if (!P) return;
   const wrap = $('#tlwrap');
   W = wrap.clientWidth; Hh = wrap.clientHeight;
-  laneH = Math.max(56, Math.floor((Hh - TOP) / P.tracks.length));
+  laneH = Math.max(60, Math.floor((Hh - TOP) / P.tracks.length));
   const dpr = devicePixelRatio || 1;
   cv.width = Math.round(W * dpr); cv.height = Math.round(Hh * dpr);
   cv.style.width = W + 'px'; cv.style.height = Hh + 'px';
   cx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  renderHeaders(); redraw();
+  renderTCP(); redraw();
 }
 function redraw() { S.dirty = true; if (!S.raf) S.raf = requestAnimationFrame(frame); }
-function loop() { redraw(); }
 function frame() {
   S.raf = 0;
+  let t = P.playhead;
   if (S.playing) {
-    const t = transportTime();
-    if (t >= T.stopAt) { stop(); }
+    t = transportTime();
+    if (t >= T.stopAt) stop();
     else {
       if (S.follow && !Drag.active) {
         const x = tToX(t);
@@ -433,111 +552,120 @@ function frame() {
       }
       Meter.tick(); S.dirty = true;
     }
-    $('#time').textContent = fmtTime(S.playing ? t : P.playhead);
-  } else $('#time').textContent = fmtTime(P.playhead);
-  drawMeter();
+  }
+  const tm = $('#time'); if (tm) tm.textContent = fmtTime(S.playing ? t : P.playhead);
+  drawBarMeter($('#meterT'), false); drawBarMeter($('#meterM'), true); updateMeterText();
   if (S.dirty) { draw(); S.dirty = false; }
   if (S.playing) S.raf = requestAnimationFrame(frame);
 }
 function niceStep() {
   const steps = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120];
-  for (const s of steps) if (s * S.pps >= 64) return s;
+  for (const s of steps) if (s * S.pps >= 70) return s;
   return 300;
 }
-function fmtRuler(t, step) { const m = Math.floor(t / 60), s = t - m * 60; return step < 1 ? `${m}:${s.toFixed(step < 0.1 ? 2 : 1).padStart(step < 0.1 ? 5 : 4, '0')}` : `${m}:${String(Math.round(s)).padStart(2, '0')}`; }
-
+function fmtRuler(t, step) {
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return `${m}:${s.toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0).padStart(step < 0.1 ? 5 : step < 1 ? 4 : 2, '0')}`;
+}
 function draw() {
-  const x = cx, css = getComputedStyle(document.documentElement);
-  const col = (n) => css.getPropertyValue(n).trim();
-  x.clearRect(0, 0, W, Hh);
-  // lanes
-  P.tracks.forEach((t, i) => { x.fillStyle = i % 2 ? col('--lane2') : col('--lane'); x.fillRect(0, laneY(i), W, laneH); });
-  // grid + ruler
-  x.fillStyle = col('--panel'); x.fillRect(0, 0, W, TOP);
+  const x = cx;
+  x.fillStyle = C.arr; x.fillRect(0, 0, W, Hh);
+  P.tracks.forEach((t, i) => { x.fillStyle = i % 2 ? C.lane2 : C.lane; x.fillRect(0, laneY(i), W, laneH); x.fillStyle = 'rgba(0,0,0,.35)'; x.fillRect(0, laneY(i) + laneH - 1, W, 1); });
+  // ruler
+  x.fillStyle = C.ruler; x.fillRect(0, 0, W, RULER_H);
+  x.fillStyle = C.regLane; x.fillRect(0, RULER_H, W, REG_H);
   const step = niceStep(), t0 = Math.floor(xToT(0) / step) * step;
-  x.font = '500 10.5px "JetBrains Mono", ui-monospace, monospace'; x.textBaseline = 'middle';
+  x.textBaseline = 'alphabetic';
   for (let t = t0; tToX(t) < W; t += step) {
-    const px = Math.round(tToX(t)) + 0.5; if (t < -1e-9) continue;
-    x.strokeStyle = col('--grid'); x.beginPath(); x.moveTo(px, TOP); x.lineTo(px, Hh); x.stroke();
-    x.strokeStyle = col('--dim'); x.beginPath(); x.moveTo(px, RULER_H - 7); x.lineTo(px, RULER_H); x.stroke();
-    x.fillStyle = col('--dim'); x.fillText(fmtRuler(t, step), px + 4, RULER_H / 2);
-    for (let k = 1; k < 4; k++) { const sx = Math.round(tToX(t + step * k / 4)) + 0.5; x.beginPath(); x.moveTo(sx, RULER_H - 3); x.lineTo(sx, RULER_H); x.stroke(); }
+    if (t < -1e-9) continue;
+    const px = Math.round(tToX(t)) + 0.5;
+    x.fillStyle = C.grid2; x.fillRect(px - 0.5, TOP, 1, Hh - TOP);
+    for (let k = 1; k < 4; k++) { const sx = Math.round(tToX(t + step * k / 4)); x.fillStyle = C.grid; x.fillRect(sx, TOP, 1, Hh - TOP); x.fillStyle = '#4A4E50'; x.fillRect(sx, RULER_H - 5, 1, 5); }
+    x.fillStyle = '#5A5F61'; x.fillRect(px - 0.5, 4, 1, RULER_H - 4);
+    x.fillStyle = C.rulerTxt; x.font = '600 11px -apple-system, system-ui, sans-serif';
+    x.fillText(fmtRuler(t, step), px + 4, 14);
+    x.fillStyle = '#7C8284'; x.font = '10px ui-monospace, Menlo, monospace';
+    x.fillText(fmtTime(t), px + 4, 26);
   }
-  if (tToX(0) > 0) { x.fillStyle = 'rgba(0,0,0,.35)'; x.fillRect(0, TOP, tToX(0), Hh - TOP); }
-  // regions
-  x.font = '600 11px "Golos Text", system-ui, sans-serif';
+  if (tToX(0) > 0) { x.fillStyle = 'rgba(0,0,0,.3)'; x.fillRect(0, TOP, tToX(0), Hh - TOP); }
+  // regions (Reaper: coloured bars in the region lane, dashed edges through the tracks)
+  x.font = '600 11px -apple-system, system-ui, sans-serif'; x.textBaseline = 'middle';
   for (const r of P.regions) {
     const a = tToX(r.start), b = tToX(r.start + r.len); if (b < 0 || a > W) continue;
     const sel = S.selRegion === r.id;
-    x.fillStyle = sel ? 'rgba(240,177,60,.12)' : 'rgba(240,177,60,.045)'; x.fillRect(a, TOP, b - a, Hh - TOP);
-    x.fillStyle = sel ? col('--accent') : 'rgba(240,177,60,.38)';
-    x.fillRect(a, RULER_H + 3, b - a, REG_H - 6);
-    x.fillStyle = sel ? '#1b1508' : col('--fg');
-    x.save(); x.beginPath(); x.rect(a, RULER_H, Math.max(0, b - a - 4), REG_H); x.clip();
-    const lenTxt = `${+r.len.toFixed(2)}`; x.fillText(r.name.startsWith(lenTxt) ? r.name : `${r.name}  ·  ${lenTxt} с`, a + 7, RULER_H + REG_H / 2); x.restore();
-    x.strokeStyle = sel ? 'rgba(240,177,60,.9)' : 'rgba(240,177,60,.35)'; x.setLineDash([4, 4]);
+    x.fillStyle = sel ? 'rgba(95,192,165,.10)' : 'rgba(95,192,165,.035)'; x.fillRect(a, TOP, b - a, Hh - TOP);
+    x.fillStyle = sel ? C.regionSel : C.region; x.fillRect(a, RULER_H + 2, b - a, REG_H - 4);
+    x.fillStyle = sel ? '#0F2A23' : '#E9F5F1';
+    x.save(); x.beginPath(); x.rect(a, RULER_H, Math.max(0, b - a - 3), REG_H); x.clip();
+    const lenTxt = `${+r.len.toFixed(2)}`;
+    x.fillText(r.name.startsWith(lenTxt) ? r.name : `${r.name} · ${lenTxt} с`, a + 6, RULER_H + REG_H / 2); x.restore();
+    x.strokeStyle = sel ? 'rgba(95,192,165,.9)' : 'rgba(95,192,165,.35)'; x.setLineDash([3, 4]);
     for (const px of [a, b]) { x.beginPath(); x.moveTo(Math.round(px) + 0.5, TOP); x.lineTo(Math.round(px) + 0.5, Hh); x.stroke(); }
     x.setLineDash([]);
   }
-  // clips
   for (const c of P.clips) drawClip(c);
-  // playhead
-  const ph = tToX(S.playing ? transportTime() : P.playhead);
-  if (ph >= -2 && ph <= W + 2) {
-    x.strokeStyle = col('--play'); x.lineWidth = 1.5; x.beginPath(); x.moveTo(ph, 0); x.lineTo(ph, Hh); x.stroke(); x.lineWidth = 1;
-    x.fillStyle = col('--play'); x.beginPath(); x.moveTo(ph - 6, 0); x.lineTo(ph + 6, 0); x.lineTo(ph, 9); x.fill();
+  // edit cursor / play cursor
+  const ed = tToX(P.playhead);
+  if (ed >= -2 && ed <= W + 2) {
+    x.fillStyle = C.edit; x.fillRect(Math.round(ed) - 0.5, RULER_H, 1.5, Hh - RULER_H);
+    x.beginPath(); x.moveTo(ed - 6, 0); x.lineTo(ed + 6, 0); x.lineTo(ed, 9); x.fill();
   }
-  if (Drag.snapX != null) { x.strokeStyle = '#fff'; x.globalAlpha = 0.6; x.beginPath(); x.moveTo(Drag.snapX + 0.5, TOP); x.lineTo(Drag.snapX + 0.5, Hh); x.stroke(); x.globalAlpha = 1; }
-  x.strokeStyle = col('--line'); x.beginPath(); x.moveTo(0, TOP - 0.5); x.lineTo(W, TOP - 0.5); x.stroke();
+  if (S.playing) {
+    const ph = tToX(transportTime());
+    if (ph >= -2 && ph <= W + 2) { x.fillStyle = C.play; x.fillRect(Math.round(ph) - 0.5, 0, 1.5, Hh); }
+  }
+  if (Drag.snapX != null) { x.fillStyle = 'rgba(255,255,255,.7)'; x.fillRect(Math.round(Drag.snapX), TOP, 1, Hh - TOP); }
+  x.fillStyle = '#121314'; x.fillRect(0, TOP - 1, W, 1);
 }
 function clipRect(c) {
   const i = trackIndex(c.track);
-  return { x: tToX(c.start), y: laneY(i) + 3, w: c.dur * S.pps, h: laneH - 6 };
+  return { x: tToX(c.start), y: laneY(i) + 2, w: c.dur * S.pps, h: laneH - 5 };
 }
+const HEAD = 15;
 function drawClip(c) {
   const r = clipRect(c); if (r.x > W || r.x + r.w < 0) return;
-  const x = cx, color = TRACK_COLORS[c.track] || '#999', sel = S.sel.has(c.id);
-  const e = buffers.get(c.src);
-  x.save(); x.beginPath(); x.roundRect ? x.roundRect(r.x, r.y, r.w, r.h, 4) : x.rect(r.x, r.y, r.w, r.h); x.clip();
-  x.fillStyle = color + (sel ? '55' : '2e'); x.fillRect(r.x, r.y, r.w, r.h);
-  x.fillStyle = color + (sel ? 'ee' : '99'); x.fillRect(r.x, r.y, r.w, 15);
-  // waveform
+  const x = cx, tc = TRACK_COLORS[c.track] || '#999', sel = S.sel.has(c.id), e = buffers.get(c.src), F = effFades(c);
+  x.save(); x.beginPath(); x.rect(r.x, r.y, r.w, r.h); x.clip();
+  x.fillStyle = sel ? C.itemSel : C.item; x.fillRect(r.x, r.y, r.w, r.h);
+  x.fillStyle = tc; x.globalAlpha = 0.22; x.fillRect(r.x, r.y, r.w, r.h); x.globalAlpha = 1;
+  x.fillStyle = sel ? C.itemHeadSel : C.itemHead; x.fillRect(r.x, r.y, r.w, HEAD);
+  x.fillStyle = tc; x.fillRect(r.x, r.y, r.w, 2);
   if (e) {
-    const mid = r.y + 15 + (r.h - 15) / 2, amp = (r.h - 19) / 2, lin = dbToLin(c.gain);
+    const mid = r.y + HEAD + (r.h - HEAD) / 2, amp = (r.h - HEAD - 4) / 2, lin = dbToLin(c.gain);
     const xa = Math.max(0, Math.floor(r.x)), xb = Math.min(W, Math.ceil(r.x + r.w));
-    x.fillStyle = sel ? color : color + 'cc';
+    x.fillStyle = C.wave;
     const { mn, mx } = e.peaks;
     for (let px = xa; px < xb; px++) {
       const rel = (px - r.x) / S.pps, srcT = c.offset + rel;
       const b0 = Math.floor(srcT * SR / PEAK_BIN), b1 = Math.max(b0 + 1, Math.floor((srcT + 1 / S.pps) * SR / PEAK_BIN));
       let lo = 0, hi = 0;
-      for (let b = b0; b < b1 && b < mn.length; b++) { if (b < 0) continue; if (mn[b] < lo) lo = mn[b]; if (mx[b] > hi) hi = mx[b]; }
-      let fg = 1; if (rel < c.fin) fg = rel / c.fin; else if (rel > c.dur - c.fout) fg = (c.dur - rel) / c.fout;
-      const y0 = mid - Math.min(1, hi * lin * clamp(fg, 0, 1)) * amp, y1 = mid - Math.max(-1, lo * lin * clamp(fg, 0, 1)) * amp;
+      for (let b = Math.max(0, b0); b < b1 && b < mn.length; b++) { if (mn[b] < lo) lo = mn[b]; if (mx[b] > hi) hi = mx[b]; }
+      const g = gainAt(c, F, rel) * lin;
+      const y0 = mid - Math.min(1, hi * g) * amp, y1 = mid - Math.max(-1, lo * g) * amp;
       x.fillRect(px, y0, 1, Math.max(1, y1 - y0));
     }
-  } else { x.fillStyle = color; x.fillText('…', r.x + 6, r.y + r.h / 2); }
-  // fades
-  x.strokeStyle = 'rgba(255,255,255,.75)'; x.lineWidth = 1;
-  const fi = c.fin * S.pps, fo = c.fout * S.pps;
-  x.beginPath(); x.moveTo(r.x, r.y + r.h); x.lineTo(r.x + fi, r.y + 15); x.stroke();
-  x.beginPath(); x.moveTo(r.x + r.w - fo, r.y + 15); x.lineTo(r.x + r.w, r.y + r.h); x.stroke();
-  // name
-  x.fillStyle = '#121212'; x.font = '600 10.5px "Golos Text", system-ui, sans-serif'; x.textBaseline = 'middle';
-  x.fillText(c.name + (c.gain ? `  ${fmtDb(c.gain)} дБ` : ''), r.x + 6 + Math.max(0, -r.x), r.y + 8);
+  }
+  // fade curves
+  x.strokeStyle = 'rgba(10,12,12,.85)'; x.lineWidth = 1.2;
+  const top = r.y + HEAD, bot = r.y + r.h, fh = bot - top;
+  if (F.fin > 0.004) { x.beginPath(); for (let i = 0; i <= 24; i++) { const t = F.fin * i / 24, px = r.x + t * S.pps, py = bot - fadeShape(t / F.fin) * fh; i ? x.lineTo(px, py) : x.moveTo(px, py); } x.stroke(); }
+  if (F.fout > 0.004) { x.beginPath(); for (let i = 0; i <= 24; i++) { const t = F.fout * i / 24, px = r.x + r.w - t * S.pps, py = bot - fadeShape(t / F.fout) * fh; i ? x.lineTo(px, py) : x.moveTo(px, py); } x.stroke(); }
+  if (F.xin > 0) { x.fillStyle = 'rgba(98,214,185,.18)'; x.fillRect(r.x, top, F.xin * S.pps, fh); }
+  x.lineWidth = 1;
+  // label
+  x.fillStyle = '#121414'; x.font = '600 11px -apple-system, system-ui, sans-serif'; x.textBaseline = 'middle';
+  x.fillText((c.gain ? `[${fmtDb(c.gain)} dB] ` : '') + c.name, r.x + 5 + Math.max(0, -r.x), r.y + 8.5);
   x.restore();
+  x.strokeStyle = sel ? '#F4F7F6' : 'rgba(0,0,0,.55)'; x.lineWidth = sel ? 1.5 : 1;
+  x.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1); x.lineWidth = 1;
   if (sel) {
-    x.strokeStyle = '#fff'; x.lineWidth = 1.5; x.strokeRect(r.x + 0.75, r.y + 0.75, r.w - 1.5, r.h - 1.5); x.lineWidth = 1;
-    // fade handles
     x.fillStyle = '#fff';
-    for (const hx of [r.x + fi, r.x + r.w - fo]) { x.beginPath(); x.arc(hx, r.y + 15, isTouch ? 5 : 4, 0, Math.PI * 2); x.fill(); }
-    // trim grips
-    x.fillStyle = 'rgba(255,255,255,.9)';
-    x.fillRect(r.x + 2, r.y + r.h / 2 - 10, 3, 20); x.fillRect(r.x + r.w - 5, r.y + r.h / 2 - 10, 3, 20);
+    for (const hx of [r.x + c.fin * S.pps, r.x + r.w - c.fout * S.pps]) { x.beginPath(); x.arc(hx, r.y + HEAD, isTouch ? 5 : 4, 0, Math.PI * 2); x.fill(); }
+    x.fillStyle = 'rgba(255,255,255,.95)';
+    x.fillRect(r.x + 2, r.y + HEAD + (r.h - HEAD) / 2 - 9, 3, 18); x.fillRect(r.x + r.w - 5, r.y + HEAD + (r.h - HEAD) / 2 - 9, 3, 18);
   }
 }
 
-/* ================= Snapping ================= */
 function snapPoints(exclClips, exclReg) {
   const pts = [0, P.playhead];
   for (const r of P.regions) if (r.id !== exclReg) pts.push(r.start, r.start + r.len);
@@ -677,8 +805,14 @@ function onUp(e) {
   const D = Drag.active; Drag.active = null; Drag.snapX = null;
   if (!D) return;
   if (D.kind === 'empty' && !D.moved) {
-    S.sel.clear(); S.selRegion = null; S.inspector = S.inspector === 'clip' || S.inspector === 'region' ? 'none' : S.inspector;
-    seekTo(snapTime(D.t0, new Set())); Drag.snapX = null; renderInspector();
+    // tap on empty space: deselect and put the cursor there
+    S.sel.clear(); S.selRegion = null; S.inspector = 'none';
+    P.playhead = Math.max(0, D.t0); if (S.playing) restartPlayback();
+    renderInspector();
+  } else if (!D.moved && D.clip && !D.shift) {
+    // tap on a clip: select it and move the edit cursor to the tap point (like Reaper)
+    P.playhead = Math.max(0, D.t0); if (S.playing) restartPlayback();
+    refreshInspectorValues();
   }
   if (D.moved && D.orig) { commit(); if (S.playing) restartPlayback(); }
   else if (D.orig) updateToolbar();
@@ -770,15 +904,15 @@ function duplicateRegion(r) {
   P.regions.push(nr); S.selRegion = nr.id; commit(); renderInspector(); zoomRegion(nr);
 }
 
-/* ================= Rendering & analysis ================= */
+
 async function renderRange(start, len, limGain) {
-  const lat = latency(), extra = Math.ceil(lat * SR) + 32;
+  const extra = TOTAL_LAT + 32;
   const frames = Math.ceil(len * SR);
   const ctx = new OfflineAudioContext(2, frames + extra, SR);
   const g = await buildGraph(ctx, false, { limGain });
   scheduleClips(g, start, start + len, 0);
   const out = await ctx.startRendering();
-  const off = Math.round(lat * SR);
+  const off = TOTAL_LAT;
   const L = out.getChannelData(0).slice(off, off + frames), R = out.getChannelData(1).slice(off, off + frames);
   return [L, R];
 }
@@ -846,7 +980,7 @@ function finalize(raw) {
   return ch;
 }
 async function processRegion(r, onStep) {
-  const M = P.master; let gain = M.lim.gain;
+  const M = P.master; let gain = -M.lim.thresh;
   let ch = finalize(await renderRange(r.start, r.len, gain));
   if (M.autoRms) {
     let prev = null;
@@ -899,293 +1033,230 @@ function loadLame() {
   });
   return lamePromise;
 }
-async function encodeMp3(ch) {
+async function encodeMp3(ch, sr = SR, kbps = 320, onProgress) {
   await loadLame();
-  const enc = new lamejs.Mp3Encoder(2, SR, 320), n = ch[0].length, blk = 1152, parts = [];
+  const mono = ch.length === 1;
+  const enc = new lamejs.Mp3Encoder(mono ? 1 : 2, sr, kbps), n = ch[0].length, blk = 1152, parts = [];
   const toI16 = (d) => { const o = new Int16Array(d.length); for (let i = 0; i < d.length; i++) o[i] = clamp(Math.round(d[i] * 32767), -32768, 32767); return o; };
-  const L = toI16(ch[0]), R = toI16(ch[1]);
-  for (let i = 0; i < n; i += blk) { const b = enc.encodeBuffer(L.subarray(i, i + blk), R.subarray(i, i + blk)); if (b.length) parts.push(new Uint8Array(b)); }
+  const L = toI16(ch[0]), R = mono ? null : toI16(ch[1]);
+  for (let i = 0, k = 0; i < n; i += blk, k++) {
+    const b = mono ? enc.encodeBuffer(L.subarray(i, i + blk)) : enc.encodeBuffer(L.subarray(i, i + blk), R.subarray(i, i + blk));
+    if (b.length) parts.push(new Uint8Array(b));
+    if (onProgress && k % 400 === 0) { onProgress(i / n); await new Promise((r) => setTimeout(r, 0)); }
+  }
   const e = enc.flush(); if (e.length) parts.push(new Uint8Array(e));
   return new Blob(parts, { type: 'audio/mpeg' });
 }
+function encodeWav24At(ch, sr) {
+  const n = ch[0].length, nc = ch.length, bps = 3, data = n * nc * bps;
+  const buf = new ArrayBuffer(44 + data), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + data, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, nc, true); v.setUint32(24, sr, true);
+  v.setUint32(28, sr * nc * bps, true); v.setUint16(32, nc * bps, true); v.setUint16(34, 24, true);
+  w(36, 'data'); v.setUint32(40, data, true);
+  let o = 44; const max = 8388607;
+  for (let i = 0; i < n; i++) for (let c = 0; c < nc; c++) {
+    let x = Math.round(clamp(ch[c][i], -1, 1) * max + (Math.random() - Math.random())); x = clamp(x, -max - 1, max);
+    v.setUint8(o, x & 255); v.setUint8(o + 1, (x >> 8) & 255); v.setUint8(o + 2, (x >> 16) & 255); o += 3;
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
 
-/* ================= UI: toolbar & headers ================= */
+
+/* ================= UI: toolbar, track panel, master strip, context bar ================= */
 function toast(msg, ms = 2200) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
   clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, ms);
 }
+const ICON = {
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" fill="currentColor"/></svg>',
+};
 function updateToolbar() {
   if (!P) return;
-  $('#bPlay').classList.toggle('on', S.playing);
-  $('#bPlay').setAttribute('aria-label', S.playing ? 'Стоп' : 'Играть');
-  $('#bPlay').innerHTML = S.playing ? ICON.stop : ICON.play;
+  const b = $('#bPlay');
+  b.classList.toggle('on', S.playing); b.setAttribute('aria-label', S.playing ? 'Стоп' : 'Играть');
+  b.innerHTML = S.playing ? ICON.stop : ICON.play;
+  $('#tstate').textContent = S.playing ? 'Воспроизведение' : 'Остановлено';
   $('#bSnap').classList.toggle('on', S.snap);
   $('#bRipple').classList.toggle('on', S.ripple);
   $('#bUndo').disabled = S.hidx <= 0; $('#bRedo').disabled = S.hidx >= S.hist.length - 1;
   $('#projName').textContent = P.name;
 }
-function renderHeaders() {
+const renderHeaders = () => renderTCP();
+const renderInspector = () => renderBar();
+const refreshInspectorValues = () => refreshBar();
+
+function renderTCP() {
+  if (!P) return;
   const h = $('#heads'); h.innerHTML = '';
-  h.append(el('div', { class: 'headTop', style: `height:${TOP}px` },
-    el('button', { class: 'chip', onclick: () => openInspector('master'), 'aria-label': 'Мастер' }, 'Мастер')));
-  P.tracks.forEach((t) => {
-    const anyS = P.tracks.some((k) => k.solo);
+  h.append(el('div', { class: 'tcpTop', style: `height:${TOP}px` }, el('span', {}, 'Дорожки'), el('small', {}, 'тап по имени — FX')));
+  const anySolo = P.tracks.some((k) => k.solo);
+  P.tracks.forEach((t, i) => {
     const fileIn = el('input', { type: 'file', multiple: true, accept: 'audio/*,.wav,.mp3,.aif,.aiff,.m4a,.flac,.ogg', hidden: true, onchange: (e) => { importFiles([...e.target.files], t.id, P.playhead); e.target.value = ''; } });
-    const row = el('div', { class: 'head' + (S.inspector === 'track' && S.inspectorTrack === t.id ? ' active' : '') + (t.mute || (anyS && !t.solo) ? ' muted' : ''), style: `height:${laneH}px;--tc:${TRACK_COLORS[t.id]}` },
-      el('button', { class: 'tname', onclick: () => openInspector('track', t.id) }, t.name),
-      el('div', { class: 'hrow' },
-        el('button', { class: 'ms' + (t.mute ? ' m' : ''), onclick: () => { t.mute = !t.mute; commit(); applyLive(); renderHeaders(); }, 'aria-label': 'Заглушить' }, 'M'),
-        el('button', { class: 'ms' + (t.solo ? ' s' : ''), onclick: () => { t.solo = !t.solo; commit(); applyLive(); renderHeaders(); }, 'aria-label': 'Соло' }, 'S'),
-        el('button', { class: 'ms add', onclick: () => fileIn.click(), 'aria-label': 'Добавить файл' }, '+'), fileIn),
-      t.kind === 'music' ? el('div', { class: 'grbar', title: 'Подавление музыки голосом' }, el('i', { id: 'duckGr' })) : null);
+    const chain = chainFor(t), active = chain.some((k) => fxOn(t, k));
+    const vol = el('input', { type: 'range', class: 'fader', min: -40, max: 12, step: 0.1, value: t.vol, 'aria-label': 'Громкость ' + t.name });
+    const volTxt = el('span', { class: 'vtxt mono' }, fmtDb(t.vol) + 'dB');
+    vol.addEventListener('input', () => { t.vol = +vol.value; volTxt.textContent = fmtDb(t.vol) + 'dB'; applyLive(); });
+    vol.addEventListener('change', commit);
+    vol.addEventListener('dblclick', () => { t.vol = 0; vol.value = 0; volTxt.textContent = fmtDb(0) + 'dB'; applyLive(); commit(); });
+    const pan = knob({ value: t.pan || 0, min: -1, max: 1, def: 0, size: 22, cls: 'k-tcp', bipolar: true, fmt: (v) => (Math.abs(v) < 0.01 ? 'center' : v < 0 ? Math.round(-v * 100) + '%L' : Math.round(v * 100) + '%R'), onInput: (v) => { t.pan = v; applyLive(); }, onChange: commit, title: 'Панорама' });
+    const row = el('div', { class: 'tcp' + (t.mute || (anySolo && !t.solo) ? ' muted' : ''), style: `height:${laneH}px;--tc:${TRACK_COLORS[t.id]}` },
+      el('div', { class: 'tnum' }, String(i + 1)),
+      el('div', { class: 'tmain' },
+        el('div', { class: 'trow' },
+          el('button', { class: 'tname', onclick: () => openFx(t.id) }, t.name),
+          el('button', { class: 'fxb' + (active ? ' act' : ''), onclick: () => openFx(t.id), title: 'Цепочка обработки' }, 'FX'),
+          el('button', { class: 'addb', onclick: () => fileIn.click(), 'aria-label': 'Добавить файл на дорожку' }, '+'), fileIn),
+        el('div', { class: 'trow' }, vol, pan),
+        el('div', { class: 'trow sub' }, volTxt, el('span', { class: 'ptxt mono' }, pan.fmtNow()),
+          t.kind === 'music' ? el('span', { class: 'grbar', title: 'Подавление музыки голосом' }, el('i', { id: 'duckGr' })) : null)),
+      el('div', { class: 'tms' },
+        el('button', { class: 'ms' + (t.mute ? ' m' : ''), onclick: () => { t.mute = !t.mute; commit(); applyLive(); renderTCP(); }, 'aria-label': 'Mute' }, 'M'),
+        el('button', { class: 'ms' + (t.solo ? ' s' : ''), onclick: () => { t.solo = !t.solo; commit(); applyLive(); renderTCP(); }, 'aria-label': 'Solo' }, 'S')));
+    pan.onFmt = (txt) => { const p = row.querySelector('.ptxt'); if (p) p.textContent = txt; };
     h.append(row);
   });
+  renderMasterStrip();
+}
+function renderMasterStrip() {
+  const box = $('#mfx'); if (!box) return;
+  box.innerHTML = '';
+  for (const k of chainFor('master')) {
+    const on = fxOn(P.master, k);
+    const chk = k === 'stats' || k === 'lim' ? el('span', { class: 'dotfx on' }) : el('input', { type: 'checkbox', checked: on, 'aria-label': 'Включить ' + FX_NAMES[k] });
+    if (chk.tagName === 'INPUT') chk.addEventListener('change', () => { P.master[k].on = chk.checked; applyLive(); commit(); renderMasterStrip(); });
+    box.append(el('div', { class: 'mfxrow' + (on ? '' : ' off') }, chk, el('button', { onclick: () => openFx('master', k) }, FX_NAMES[k])));
+  }
 }
 
-/* ================= UI: inspector ================= */
-function openInspector(mode, track) {
-  S.inspector = mode; S.inspectorTrack = track || null;
-  if (mode === 'track' || mode === 'master') { S.sel.clear(); }
-  $('#insp').classList.remove('collapsed');
-  renderInspector(); renderHeaders(); redraw();
-}
-function ctrlSlider({ id, label, min, max, step = 0.1, value, unit = '', fmt, onInput, onChange }) {
-  const out = el('output', { for: id }, (fmt ? fmt(value) : value) + (unit ? ' ' + unit : ''));
-  const inp = el('input', { type: 'range', id, min, max, step, value });
-  inp.addEventListener('input', () => { const v = parseFloat(inp.value); out.textContent = (fmt ? fmt(v) : v) + (unit ? ' ' + unit : ''); onInput(v); });
-  inp.addEventListener('change', () => { onChange ? onChange() : commit(); });
-  inp.addEventListener('dblclick', () => { if (inp.dataset.def != null) { inp.value = inp.dataset.def; inp.dispatchEvent(new Event('input')); inp.dispatchEvent(new Event('change')); } });
-  return el('label', { class: 'ctl', for: id }, el('span', {}, label), inp, out);
-}
-function ctrlSelect({ id, label, options, value, onChange }) {
-  const s = el('select', { id }, ...options.map(([v, t]) => el('option', { value: v, selected: String(v) === String(value) }, t)));
-  s.addEventListener('change', () => { onChange(s.value); commit(); });
-  return el('label', { class: 'ctl' }, el('span', {}, label), s, el('output', {}, ''));
-}
-function ctrlToggle({ id, label, value, onChange }) {
-  const c = el('input', { type: 'checkbox', id, checked: value });
-  c.addEventListener('change', () => { onChange(c.checked); commit(); });
-  return el('label', { class: 'tog', for: id }, c, el('span', {}, label));
-}
-const fmt1 = (v) => (v > 0 ? '+' : '') + Number(v).toFixed(1);
-function section(title, ...kids) { return el('section', { class: 'sec' }, el('h3', {}, title), ...kids); }
-
-function renderInspector() {
-  const box = $('#inspBody'); box.innerHTML = '';
-  const title = $('#inspTitle');
-  const mode = S.inspector;
-  if (mode === 'clip' && selClips().length) return inspClip(box, title);
-  if (mode === 'track') { const t = P.tracks.find((k) => k.id === S.inspectorTrack); if (t) return inspTrack(box, title, t); }
-  if (mode === 'master') return inspMaster(box, title);
-  if (mode === 'region') { const r = P.regions.find((k) => k.id === S.selRegion); if (r) return inspRegion(box, title, r); }
-  title.textContent = 'Подсказки';
+/* ---------- context bar (item / region properties) ---------- */
+function renderBar() {
+  const box = $('#ctx'); if (!box || !P) return;
+  box.innerHTML = '';
+  const cs = selClips();
+  if (S.inspector === 'clip' && cs.length) return barClip(box, cs);
+  const r = S.inspector === 'region' && P.regions.find((k) => k.id === S.selRegion);
+  if (r) return barRegion(box, r);
   box.append(el('div', { class: 'hint' },
-    el('p', {}, el('b', {}, '+'), ' на дорожке добавляет файлы с позиции курсора. Тап по клипу выделяет его, края тянут обрезку, белые точки сверху — фейды.'),
-    el('p', {}, 'Два пальца сводят и разводят масштаб, перетаскивание пустого места двигает таймлайн. Тап по линейке ставит курсор.'),
-    el('p', {}, 'Клавиатура на iPad: пробел — играть, S — разрезать, Delete — удалить, ⌘Z — отменить, стрелки — сдвиг на 10 мс.'),
-    el('p', {}, 'Имя дорожки открывает её обработку, «Мастер» — мастер-цепочку. Регионы сверху выгружаются отдельными файлами.')));
+    el('span', {}, el('b', {}, '+'), ' на дорожке — добавить файл'),
+    el('span', {}, 'тап — курсор, S — разрезать'),
+    el('span', {}, 'наложи клипы — будет кроссфейд'),
+    el('span', {}, 'имя дорожки или FX — обработка')));
 }
-function refreshInspectorValues() {
-  if (S.inspector === 'clip') { const c = selClips()[0]; if (!c) return; const s = $('#clipPos'); if (s) s.textContent = `${fmtTime(c.start)} → ${fmtTime(c.start + c.dur)}  ·  ${c.dur.toFixed(3)} с`; }
-  if (S.inspector === 'region') { const r = P.regions.find((k) => k.id === S.selRegion); const s = $('#regPos'); if (r && s) s.textContent = `${fmtTime(r.start)} → ${fmtTime(r.start + r.len)}`; const l = $('#regLen'); if (r && l && document.activeElement !== l) l.value = r.len.toFixed(2); }
+function numField(id, value, step, min, onSet, w = '4.6em') {
+  const n = el('input', { type: 'number', id, inputmode: 'decimal', step, min, value, class: 'num', style: `width:${w}` });
+  n.addEventListener('change', () => { const v = parseFloat(n.value); if (!isNaN(v)) onSet(v); });
+  return n;
 }
-function inspClip(box, title) {
-  const cs = selClips(), c = cs[0];
-  title.textContent = cs.length > 1 ? `Клипы: ${cs.length}` : c.name;
-  const tr = P.tracks.find((t) => t.id === c.track);
-  box.append(el('div', { class: 'meta' }, el('span', { class: 'dot', style: `background:${TRACK_COLORS[c.track]}` }), tr.name, el('span', { id: 'clipPos', class: 'mono' }, '')));
-  const applyAll = (fn) => { for (const k of cs) fn(k); redraw(); };
-  box.append(el('div', { class: 'grid' },
-    ctrlSlider({ id: 'cGain', label: 'Громкость клипа', min: -24, max: 12, step: 0.1, value: c.gain, unit: 'дБ', fmt: fmt1, onInput: (v) => applyAll((k) => { k.gain = v; }), onChange: () => { commit(); restartIfPlaying(); } }),
-    ctrlSlider({ id: 'cFin', label: 'Фейд-ин', min: 0, max: Math.min(3000, c.dur * 500), step: 1, value: Math.round(c.fin * 1000), unit: 'мс', onInput: (v) => applyAll((k) => { k.fin = clamp(v / 1000, 0.002, k.dur - k.fout); }), onChange: () => { commit(); restartIfPlaying(); } }),
-    ctrlSlider({ id: 'cFout', label: 'Фейд-аут', min: 0, max: Math.min(3000, c.dur * 500), step: 1, value: Math.round(c.fout * 1000), unit: 'мс', onInput: (v) => applyAll((k) => { k.fout = clamp(v / 1000, 0.002, k.dur - k.fin); }), onChange: () => { commit(); restartIfPlaying(); } })));
-  box.append(el('div', { class: 'btns' },
-    el('button', { class: 'btn', onclick: () => splitAt() }, 'Разрезать по курсору'),
-    el('button', { class: 'btn', onclick: () => nudge(-0.01) }, '← 10 мс'),
-    el('button', { class: 'btn', onclick: () => nudge(0.01) }, '10 мс →'),
-    el('button', { class: 'btn', onclick: duplicateSel }, 'Дублировать'),
-    el('button', { class: 'btn', onclick: normalizeSel }, 'Пик −1 дБ'),
-    el('button', { class: 'btn danger', onclick: deleteSel }, S.ripple ? 'Удалить со сдвигом' : 'Удалить')));
-  if (c.track === 'mu') box.append(raoCard(c.src));
-  refreshInspectorValues();
+function barClip(box, cs) {
+  const c = cs[0];
+  const g = el('input', { type: 'range', class: 'fader small', min: -24, max: 12, step: 0.1, value: c.gain, id: 'cGain' });
+  const gt = el('span', { class: 'mono vtxt' }, fmtDb(c.gain) + ' dB');
+  g.addEventListener('input', () => { for (const k of cs) k.gain = +g.value; gt.textContent = fmtDb(+g.value) + ' dB'; redraw(); });
+  g.addEventListener('change', () => { commit(); restartIfPlaying(); });
+  g.addEventListener('dblclick', () => { for (const k of cs) k.gain = 0; commit(); renderBar(); redraw(); });
+  const fi = numField('cFin', Math.round(c.fin * 1000), 1, 0, (v) => { for (const k of cs) k.fin = clamp(v / 1000, 0.002, k.dur - k.fout); commit(); redraw(); restartIfPlaying(); });
+  const fo = numField('cFout', Math.round(c.fout * 1000), 1, 0, (v) => { for (const k of cs) k.fout = clamp(v / 1000, 0.002, k.dur - k.fin); commit(); redraw(); restartIfPlaying(); });
+  box.append(
+    el('div', { class: 'cgrp' }, el('b', { class: 'cname' }, cs.length > 1 ? `Клипов: ${cs.length}` : c.name), el('span', { id: 'clipPos', class: 'mono dim' }, '')),
+    el('label', { class: 'cgrp' }, 'Громкость', g, gt),
+    el('label', { class: 'cgrp' }, 'Фейд-ин', fi, 'мс'),
+    el('label', { class: 'cgrp' }, 'Фейд-аут', fo, 'мс'),
+    el('div', { class: 'cgrp' },
+      el('button', { class: 'btn', onclick: () => splitAt() }, 'Разрезать'),
+      el('button', { class: 'btn', onclick: () => nudge(-0.01) }, '←10мс'),
+      el('button', { class: 'btn', onclick: () => nudge(0.01) }, '10мс→'),
+      el('button', { class: 'btn', onclick: duplicateSel }, 'Дубль'),
+      el('button', { class: 'btn', onclick: normalizeSel }, 'Пик −1'),
+      el('button', { class: 'btn danger', onclick: deleteSel }, S.ripple ? 'Удалить со сдвигом' : 'Удалить')));
+  if (c.track === 'mu') box.append(raoInline(c.src));
+  refreshBar();
+}
+function raoInline(fileId) {
+  const f = P.files[fileId] || { name: '?' }, code = findCode(f.name);
+  return el('div', { class: 'cgrp rao' },
+    el('button', { class: 'btn', onclick: () => copyText(f.name.replace(/\.[^.]+$/, ''), 'Название скопировано') }, 'Копировать название'),
+    code ? el('button', { class: 'btn', onclick: () => copyText(code, 'Код скопирован') }, code) : null,
+    el('a', { class: 'btn primary', href: code ? `https://zvukobaza.com/${code}` : 'https://zvukobaza.com/catalog/search', target: '_blank', rel: 'noopener' }, 'Звукобаза'));
+}
+function barRegion(box, r) {
+  const name = el('input', { type: 'text', id: 'regName', value: r.name, class: 'txt', style: 'width:8em' });
+  name.addEventListener('change', () => { r.name = name.value.trim() || r.name; commit(); redraw(); });
+  const len = numField('regLen', r.len.toFixed(2), 0.01, 0.5, (v) => { r.len = Math.max(0.5, v); commit(); redraw(); refreshBar(); }, '5em');
+  box.append(
+    el('div', { class: 'cgrp' }, el('b', {}, 'Регион'), name, el('span', { id: 'regPos', class: 'mono dim' }, '')),
+    el('label', { class: 'cgrp' }, 'Длина', len, 'с'),
+    el('div', { class: 'cgrp' }, ...[5, 10, 15, 20, 30].map((s) => el('button', { class: 'btn' + (Math.abs(r.len - s) < 1e-6 ? ' on' : ''), onclick: () => { r.len = s; commit(); renderBar(); redraw(); } }, s + 'с'))),
+    el('div', { class: 'cgrp' },
+      el('button', { class: 'btn primary', onclick: () => { P.playhead = r.start; play(r.start, r.start + r.len); } }, 'Слушать'),
+      el('button', { class: 'btn', onclick: () => zoomRegion(r) }, 'Показать'),
+      el('button', { class: 'btn', onclick: () => duplicateRegion(r) }, 'Вариант-копия'),
+      el('button', { class: 'btn', onclick: addVariantSet }, '+ набор 30/15/10/5'),
+      el('button', { class: 'btn danger', onclick: deleteRegion }, 'Удалить')));
+  refreshBar();
+}
+function refreshBar() {
+  const c = selClips()[0], s = $('#clipPos');
+  if (c && s) s.textContent = `${fmtTime(c.start)} – ${fmtTime(c.start + c.dur)} · ${c.dur.toFixed(3)} с`;
+  const r = P.regions.find((k) => k.id === S.selRegion), rp = $('#regPos');
+  if (r && rp) rp.textContent = `${fmtTime(r.start)} – ${fmtTime(r.start + r.len)}`;
+  const l = $('#regLen'); if (r && l && document.activeElement !== l) l.value = r.len.toFixed(2);
 }
 function restartIfPlaying() { if (S.playing) restartPlayback(); }
+async function copyText(s, msg = 'Скопировано') {
+  try { await navigator.clipboard.writeText(s); toast(msg); }
+  catch { const ta = el('textarea', {}, s); document.body.append(ta); ta.select(); try { document.execCommand('copy'); toast(msg); } catch { toast('Выдели и скопируй вручную'); } ta.remove(); }
+}
 function raoCard(fileId) {
   const f = P.files[fileId] || { name: '?' }, code = findCode(f.name);
-  return el('div', { class: 'rao' },
+  return el('div', { class: 'raocard' },
     el('div', { class: 'raoName mono' }, f.name),
     el('div', { class: 'btns' },
       el('button', { class: 'btn', onclick: () => copyText(f.name.replace(/\.[^.]+$/, ''), 'Название скопировано') }, 'Копировать название'),
       code ? el('button', { class: 'btn', onclick: () => copyText(code, 'Код скопирован') }, 'Копировать ' + code) : null,
       el('a', { class: 'btn primary', href: code ? `https://zvukobaza.com/${code}` : 'https://zvukobaza.com/catalog/search', target: '_blank', rel: 'noopener' }, code ? 'Открыть в Звукобазе' : 'Поиск в Звукобазе')));
 }
-async function copyText(s, msg = 'Скопировано') {
-  try { await navigator.clipboard.writeText(s); toast(msg); }
-  catch { const ta = el('textarea', {}, s); document.body.append(ta); ta.select(); try { document.execCommand('copy'); toast(msg); } catch { toast('Выдели и скопируй вручную'); } ta.remove(); }
-}
 
-/* EQ editor */
-const fToX = (f, w) => Math.log(f / 20) / Math.log(1000) * w;
-const xToF = (x, w) => 20 * Math.pow(1000, x / w);
-let eqCtx = null;
-function eqResponse(bands, freqs) {
-  if (!eqCtx) eqCtx = new OfflineAudioContext(1, 128, SR);
-  const tot = new Float32Array(freqs.length), mag = new Float32Array(freqs.length), ph = new Float32Array(freqs.length);
-  const per = [];
-  for (const b of bands) {
-    if (!b.on) { per.push(null); continue; }
-    const n = eqCtx.createBiquadFilter(); setBand(n, b);
-    n.getFrequencyResponse(freqs, mag, ph);
-    const db = new Float32Array(freqs.length);
-    for (let i = 0; i < freqs.length; i++) { db[i] = 20 * Math.log10(mag[i] + 1e-9); tot[i] += db[i]; }
-    per.push(db);
-  }
-  return { tot, per };
-}
-function eqEditor(bands, color, onChange) {
-  const wrap = el('div', { class: 'eq' });
-  const c = el('canvas', { class: 'eqc', 'aria-label': 'Эквалайзер, тяните точки' });
-  const list = el('div', { class: 'eqlist' });
-  wrap.append(c, list);
-  const GR = 18;
-  let sel = 0;
-  const draw = () => {
-    const dpr = devicePixelRatio || 1, w = c.clientWidth || 300, h = c.clientHeight || 150;
-    if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
-    const x = c.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, w, h);
-    const yOf = (db) => h / 2 - db / GR * (h / 2 - 8);
-    x.strokeStyle = 'rgba(255,255,255,.07)'; x.fillStyle = 'rgba(255,255,255,.35)'; x.font = '10px "JetBrains Mono", monospace';
-    for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) { const px = fToX(f, w); x.beginPath(); x.moveTo(px, 0); x.lineTo(px, h); x.stroke(); x.fillText(f >= 1000 ? f / 1000 + 'k' : f, px + 3, h - 4); }
-    for (const d of [-12, -6, 0, 6, 12]) { const py = yOf(d); x.beginPath(); x.moveTo(0, py); x.lineTo(w, py); x.stroke(); }
-    const N = Math.min(400, Math.floor(w)), freqs = new Float32Array(N);
-    for (let i = 0; i < N; i++) freqs[i] = xToF(i / (N - 1) * w, w);
-    const { tot, per } = eqResponse(bands, freqs);
-    if (per[sel]) { x.fillStyle = color + '33'; x.beginPath(); x.moveTo(0, yOf(0)); for (let i = 0; i < N; i++) x.lineTo(i / (N - 1) * w, yOf(clamp(per[sel][i], -GR - 6, GR + 6))); x.lineTo(w, yOf(0)); x.fill(); }
-    x.strokeStyle = color; x.lineWidth = 2; x.beginPath();
-    for (let i = 0; i < N; i++) { const py = yOf(clamp(tot[i], -GR - 6, GR + 6)); i ? x.lineTo(i / (N - 1) * w, py) : x.moveTo(0, py); }
-    x.stroke(); x.lineWidth = 1;
-    bands.forEach((b, i) => {
-      const px = fToX(b.f, w), py = yOf(b.type === 'highpass' || b.type === 'lowpass' ? 0 : b.g);
-      x.fillStyle = i === sel ? '#fff' : b.on ? color : 'rgba(255,255,255,.25)';
-      x.beginPath(); x.arc(px, py, i === sel ? 7 : 5.5, 0, Math.PI * 2); x.fill();
-      x.fillStyle = '#111'; x.font = '600 9px "JetBrains Mono", monospace'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(i + 1, px, py + 0.5); x.textAlign = 'start'; x.textBaseline = 'alphabetic';
-    });
-  };
-  const renderList = () => {
-    list.innerHTML = '';
-    bands.forEach((b, i) => {
-      const num = (k, min, max, step, w) => { const n = el('input', { type: 'number', inputmode: 'decimal', min, max, step, value: k === 'f' ? Math.round(b.f) : +(+b[k]).toFixed(2), class: 'num', style: `width:${w}` }); n.addEventListener('change', () => { b[k] = clamp(parseFloat(n.value) || 0, min, max); onChange(); draw(); commit(); }); n.addEventListener('focus', () => { sel = i; draw(); }); return n; };
-      const ty = el('select', { class: 'ty' }, ...[['highpass', 'HP'], ['lowshelf', 'LS'], ['peaking', 'Bell'], ['highshelf', 'HS'], ['lowpass', 'LP']].map(([v, t]) => el('option', { value: v, selected: b.type === v }, t)));
-      ty.addEventListener('change', () => { b.type = ty.value; onChange(); draw(); commit(); });
-      const on = el('input', { type: 'checkbox', checked: b.on, 'aria-label': 'Включить полосу ' + (i + 1) });
-      on.addEventListener('change', () => { b.on = on.checked; onChange(); draw(); commit(); });
-      const rm = el('button', { class: 'x', 'aria-label': 'Удалить полосу', onclick: () => { bands.splice(i, 1); sel = 0; onChange(); renderList(); draw(); commit(); } }, '×');
-      list.append(el('div', { class: 'eqrow' + (i === sel ? ' sel' : ''), onclick: () => { sel = i; draw(); [...list.children].forEach((r, j) => r.classList.toggle('sel', j === i)); } },
-        on, el('b', {}, i + 1), ty, num('f', 10, 22000, 1, '5.4em'), el('small', {}, 'Гц'), num('g', -24, 24, 0.5, '3.6em'), el('small', {}, 'дБ'), num('q', 0.1, 18, 0.01, '4.8em'), el('small', {}, 'Q'), rm));
-    });
-    if (bands.length < MAXB) list.append(el('button', { class: 'btn small', onclick: () => { bands.push(eqBand('peaking', 1000, 0, 1)); sel = bands.length - 1; onChange(); renderList(); draw(); commit(); } }, '+ полоса'));
-  };
-  // drag points
-  let drag = null;
-  c.addEventListener('pointerdown', (e) => {
-    const r = c.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, w = r.width, h = r.height;
-    const yOf = (db) => h / 2 - db / GR * (h / 2 - 8);
-    let best = -1, bd = isTouch ? 28 : 16;
-    bands.forEach((b, i) => { const d = Math.hypot(fToX(b.f, w) - px, yOf(b.type === 'highpass' || b.type === 'lowpass' ? 0 : b.g) - py); if (d < bd) { bd = d; best = i; } });
-    if (best < 0) return;
-    sel = best; drag = { w, h }; c.setPointerCapture(e.pointerId); renderList(); draw();
+/* ---------- FX chain window (Reaper-style: list on the left, plugin on the right) ---------- */
+const FXW = { target: null, key: null, raf: 0, tick: null };
+function openFx(target, key) {
+  stopFxLoop();
+  const obj = targetObj(target), chain = chainFor(target === 'master' ? 'master' : obj);
+  key = key || FXW.lastKey?.[target] || chain[0];
+  FXW.target = target; FXW.key = key; (FXW.lastKey ||= {})[target] = key;
+  closeModal();
+  const trackNo = target === 'master' ? 'Master' : `Track ${trackIndex(target) + 1} «${obj.name}»`;
+  const list = el('div', { class: 'fxlist', role: 'listbox' });
+  chain.forEach((k, i) => {
+    const on = fxOn(obj, k);
+    const chk = k === 'stats' || k === 'lim' ? el('span', { class: 'dotfx on' }) : el('input', { type: 'checkbox', checked: on, 'aria-label': 'Включить ' + FX_NAMES[k] });
+    if (chk.tagName === 'INPUT') chk.addEventListener('change', (e) => { e.stopPropagation(); obj[k].on = chk.checked; applyLive(); commit(); renderTCP(); openFx(target, FXW.key); });
+    list.append(el('div', { class: 'fxrow' + (k === key ? ' sel' : '') + (on ? '' : ' off'), role: 'option', onclick: (e) => { if (e.target !== chk) openFx(target, k); } }, chk, el('span', {}, FX_NAMES[k])));
   });
-  c.addEventListener('pointermove', (e) => {
-    if (!drag) return; const r = c.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
-    const b = bands[sel]; b.f = Math.round(clamp(xToF(clamp(px, 0, drag.w), drag.w), 20, 20000));
-    if (b.type !== 'highpass' && b.type !== 'lowpass') b.g = Math.round(clamp((drag.h / 2 - py) / (drag.h / 2 - 8) * GR, -GR, GR) * 2) / 2;
-    if (!b.on) b.on = true;
-    onChange(); draw();
-    const row = list.children[sel]; if (row) { const ns = row.querySelectorAll('input.num'); ns[0].value = Math.round(b.f); ns[1].value = b.g; }
-  });
-  c.addEventListener('pointerup', () => { if (drag) { drag = null; renderList(); commit(); } });
-  c.addEventListener('wheel', (e) => { const b = bands[sel]; if (!b) return; e.preventDefault(); b.q = Math.round(clamp(b.q * Math.exp(-e.deltaY * 0.003), 0.1, 18) * 100) / 100; onChange(); draw(); renderList(); }, { passive: false });
-  renderList();
-  requestAnimationFrame(draw);
-  new ResizeObserver(draw).observe(c);
-  return wrap;
+  list.append(el('p', { class: 'fxnote' }, 'Обработка идёт сверху вниз'));
+  const gui = el('div', { class: 'fxgui' });
+  const win = el('div', { class: 'fxwin', role: 'dialog', 'aria-modal': 'true' },
+    el('header', { class: 'fxtitle' },
+      el('span', {}, `FX: ${trackNo} [${chain.indexOf(key) + 1}/${chain.length}] ${FX_NAMES[key]}`),
+      el('button', { class: 'x', 'aria-label': 'Закрыть', onclick: closeModal }, '×')),
+    el('div', { class: 'fxbody' }, list, gui));
+  const m = el('div', { class: 'modal', id: 'modal', onclick: (e) => { if (e.target.id === 'modal') closeModal(); } }, win);
+  document.body.append(m);
+  const ctx = { obj, target, key, color: target === 'master' ? '#E8E4DA' : TRACK_COLORS[target], an: () => T.g && (target === 'master' ? (key === 'mb' ? T.g.master.anIn : T.g.master.anEq) : T.g.tracks[target]?.an), gr: (k) => Meter.gr[(target === 'master' ? 'master' : target) + '.' + k], change: () => { applyLive(); }, commit: () => { commit(); renderMasterStrip(); } };
+  const ui = FXUI[key](obj, ctx);
+  gui.append(ui.el);
+  FXW.tick = ui.tick || null;
+  if (FXW.tick) startFxLoop();
 }
-function inspTrack(box, title, t) {
-  title.textContent = t.name;
-  const color = TRACK_COLORS[t.id];
-  box.append(el('div', { class: 'grid' },
-    ctrlSlider({ id: 'tVol', label: 'Громкость', min: -36, max: 12, value: t.vol, unit: 'дБ', fmt: fmt1, onInput: (v) => { t.vol = v; applyLive(); } }),
-    ctrlSlider({ id: 'tPan', label: 'Панорама', min: -1, max: 1, step: 0.01, value: t.pan || 0, fmt: (v) => (Math.abs(v) < 0.01 ? 'центр' : v < 0 ? 'L' + Math.round(-v * 100) : 'R' + Math.round(v * 100)), onInput: (v) => { t.pan = v; applyLive(); } })));
-  box.append(section('Эквалайзер', eqEditor(t.eq, color, applyLive)));
-  if (t.kind === 'voice') {
-    box.append(section('Вокальный компрессор (как RVOX)',
-      el('div', { class: 'grid' },
-        ctrlToggle({ id: 'rvOn', label: 'Включён', value: t.rvox.on, onChange: (v) => { t.rvox.on = v; applyLive(); } }),
-        ctrlSlider({ id: 'rvAmt', label: 'Компрессия', min: 0, max: 10, step: 0.1, value: t.rvox.amount, fmt: (v) => v.toFixed(1), onInput: (v) => { t.rvox.amount = v; applyLive(); } }),
-        ctrlSlider({ id: 'rvGain', label: 'Выход', min: -18, max: 12, value: t.rvox.gain, unit: 'дБ', fmt: fmt1, onInput: (v) => { t.rvox.gain = v; applyLive(); } }),
-        ctrlSlider({ id: 'drv', label: 'Перегруз', min: 0, max: 1, step: 0.01, value: t.drive || 0, fmt: (v) => Math.round(v * 100) + '%', onInput: (v) => { t.drive = v; applyLive(); } }))));
-  }
-  if (t.kind === 'music') {
-    const d = t.duck;
-    box.append(section('Динамическое подавление голосом (Mid)',
-      el('p', { class: 'note' }, 'Музыка проседает только в тех полосах частот, где сейчас звучит голос. Side не трогается, ширина сохраняется. Сейчас: ', el('b', { id: 'duckGrI', class: 'mono' }, '—'), ' дБ'),
-      el('div', { class: 'grid' },
-        ctrlToggle({ id: 'dkOn', label: 'Включено', value: d.on, onChange: (v) => { d.on = v; applyLive(); } }),
-        ctrlSlider({ id: 'dkDepth', label: 'Глубина', min: 0, max: 18, step: 0.5, value: d.depth, unit: 'дБ', fmt: (v) => v.toFixed(1), onInput: (v) => { d.depth = v; applyLive(); } }),
-        ctrlSlider({ id: 'dkSens', label: 'Чувствительность', min: 0, max: 18, step: 0.5, value: d.sens, unit: 'дБ', fmt: (v) => v.toFixed(1), onInput: (v) => { d.sens = v; applyLive(); } }),
-        ctrlSlider({ id: 'dkAtt', label: 'Атака', min: 1, max: 100, step: 1, value: d.attack, unit: 'мс', fmt: (v) => v, onInput: (v) => { d.attack = v; applyLive(); } }),
-        ctrlSlider({ id: 'dkRel', label: 'Восстановление', min: 20, max: 800, step: 5, value: d.release, unit: 'мс', fmt: (v) => v, onInput: (v) => { d.release = v; applyLive(); } }),
-        ctrlSlider({ id: 'dkLo', label: 'Нижняя граница', min: 40, max: 1000, step: 5, value: d.lo, unit: 'Гц', fmt: (v) => v, onInput: (v) => { d.lo = v; applyLive(); } }),
-        ctrlSlider({ id: 'dkHi', label: 'Верхняя граница', min: 2000, max: 16000, step: 100, value: d.hi, unit: 'Гц', fmt: (v) => v, onInput: (v) => { d.hi = v; applyLive(); } }))));
-  }
+function startFxLoop() {
+  const loop = () => { if (!$('#modal .fxwin')) { FXW.raf = 0; return; } try { FXW.tick && FXW.tick(); } catch (e) { console.warn(e); } FXW.raf = requestAnimationFrame(loop); };
+  FXW.raf = requestAnimationFrame(loop);
 }
-function inspMaster(box, title) {
-  title.textContent = 'Мастер';
-  const M = P.master, c = M.comp, l = M.lim;
-  box.append(section('Эквалайзер', eqEditor(M.eq, '#E8E4DA', applyLive)));
-  box.append(section('Шинный компрессор (как SSL)',
-    el('p', { class: 'note' }, 'Подавление сейчас: ', el('b', { id: 'sslGr', class: 'mono' }, '—'), ' дБ'),
-    el('div', { class: 'grid' },
-      ctrlToggle({ id: 'scOn', label: 'Включён', value: c.on, onChange: (v) => { c.on = v; applyLive(); } }),
-      ctrlSlider({ id: 'scThr', label: 'Порог', min: -30, max: 0, step: 0.5, value: c.thresh, unit: 'дБ', fmt: (v) => v.toFixed(1), onInput: (v) => { c.thresh = v; applyLive(); } }),
-      ctrlSelect({ id: 'scRatio', label: 'Ratio', options: [[2, '2:1'], [4, '4:1'], [10, '10:1']], value: c.ratio, onChange: (v) => { c.ratio = +v; applyLive(); } }),
-      ctrlSelect({ id: 'scAtt', label: 'Атака', options: [[0.1, '0.1 мс'], [0.3, '0.3 мс'], [1, '1 мс'], [3, '3 мс'], [10, '10 мс'], [30, '30 мс']], value: c.attack, onChange: (v) => { c.attack = +v; applyLive(); } }),
-      ctrlSelect({ id: 'scRel', label: 'Восстановление', options: [[0.1, '0.1 с'], [0.3, '0.3 с'], [0.6, '0.6 с'], [1.2, '1.2 с']], value: c.release, onChange: (v) => { c.release = +v; applyLive(); } }),
-      ctrlSlider({ id: 'scMk', label: 'Make-up', min: 0, max: 15, step: 0.5, value: c.makeup, unit: 'дБ', fmt: fmt1, onInput: (v) => { c.makeup = v; applyLive(); } }))));
-  box.append(section('Лимитер с true peak (как L316)',
-    el('p', { class: 'note' }, 'Ограничение сейчас: ', el('b', { id: 'limGrI', class: 'mono' }, '—'), ' дБ. При экспорте пики дополнительно проверяются с 4× передискретизацией.'),
-    el('div', { class: 'grid' },
-      ctrlSlider({ id: 'lmGain', label: 'Вход', min: -12, max: 24, step: 0.1, value: l.gain, unit: 'дБ', fmt: fmt1, onInput: (v) => { l.gain = v; applyLive(); } }),
-      ctrlSlider({ id: 'lmCeil', label: 'Потолок', min: -3, max: 0, step: 0.1, value: l.ceiling, unit: 'dBTP', fmt: (v) => v.toFixed(1), onInput: (v) => { l.ceiling = v; applyLive(); } }),
-      ctrlSlider({ id: 'lmRel', label: 'Восстановление', min: 10, max: 500, step: 5, value: l.release, unit: 'мс', fmt: (v) => v, onInput: (v) => { l.release = v; applyLive(); } }))));
-  box.append(section('Громкость при экспорте',
-    el('div', { class: 'grid' },
-      ctrlToggle({ id: 'arOn', label: 'Подгонять RMS автоматически', value: M.autoRms, onChange: (v) => { M.autoRms = v; } }),
-      ctrlSlider({ id: 'arT', label: 'Целевой RMS', min: -16, max: -6, step: 0.5, value: M.targetRms, unit: 'дБ', fmt: (v) => v.toFixed(1), onInput: (v) => { M.targetRms = v; } }),
-      ctrlToggle({ id: 'fdOn', label: 'Фейды 50 мс на краях регионов', value: M.fades, onChange: (v) => { M.fades = v; } })),
-    el('p', { class: 'note' }, 'Авто RMS для каждого региона подбирает вход лимитера, пока RMS не совпадёт с целью с точностью ±0.1 дБ.')));
-}
-function inspRegion(box, title, r) {
-  title.textContent = 'Регион ' + r.name;
-  const name = el('input', { type: 'text', id: 'regName', value: r.name, class: 'txt' });
-  name.addEventListener('change', () => { r.name = name.value.trim() || r.name; commit(); redraw(); title.textContent = 'Регион ' + r.name; });
-  const len = el('input', { type: 'number', id: 'regLen', inputmode: 'decimal', step: 0.01, min: 0.5, value: r.len.toFixed(2), class: 'num' });
-  len.addEventListener('change', () => { r.len = Math.max(0.5, parseFloat(len.value) || r.len); commit(); redraw(); refreshInspectorValues(); });
-  box.append(el('div', { class: 'meta' }, el('span', { class: 'dot', style: 'background:var(--accent)' }), el('span', { id: 'regPos', class: 'mono' }, '')));
-  box.append(el('div', { class: 'grid' },
-    el('label', { class: 'ctl' }, el('span', {}, 'Название'), name, el('output', {}, '')),
-    el('label', { class: 'ctl' }, el('span', {}, 'Длина, с'), len, el('output', {}, ''))));
-  box.append(el('div', { class: 'btns' }, ...[5, 10, 15, 20, 30].map((s) => el('button', { class: 'btn' + (Math.abs(r.len - s) < 1e-6 ? ' on' : ''), onclick: () => { r.len = s; commit(); renderInspector(); redraw(); } }, s + ' с'))));
-  box.append(el('div', { class: 'btns' },
-    el('button', { class: 'btn primary', onclick: () => { P.playhead = r.start; play(r.start, r.start + r.len); } }, 'Слушать регион'),
-    el('button', { class: 'btn', onclick: () => zoomRegion(r) }, 'Показать целиком'),
-    el('button', { class: 'btn', onclick: () => duplicateRegion(r) }, 'Вариант: копия с содержимым'),
-    el('button', { class: 'btn', onclick: addVariantSet }, '+ набор 30/15/10/5'),
-    el('button', { class: 'btn danger', onclick: deleteRegion }, 'Удалить регион')));
-  refreshInspectorValues();
-}
+function stopFxLoop() { if (FXW.raf) cancelAnimationFrame(FXW.raf); FXW.raf = 0; FXW.tick = null; }
 
-/* ================= Modals ================= */
+/* ---------- generic modal ---------- */
 function modal(titleText, body, actions = []) {
   closeModal();
   const m = el('div', { class: 'modal', id: 'modal', role: 'dialog', 'aria-modal': 'true', onclick: (e) => { if (e.target.id === 'modal') closeModal(); } },
@@ -1196,7 +1267,7 @@ function modal(titleText, body, actions = []) {
   document.body.append(m);
   return m;
 }
-function closeModal() { const m = $('#modal'); if (m) m.remove(); }
+function closeModal() { stopFxLoop(); const m = $('#modal'); if (m) m.remove(); }
 
 async function openExport() {
   const M = P.master;
@@ -1208,7 +1279,7 @@ async function openExport() {
   const body = el('div', {},
     el('h4', {}, 'Регионы'), el('div', { class: 'checks' }, ...checks),
     el('h4', {}, 'Формат'), fmtSel,
-    el('p', { class: 'note' }, M.autoRms ? `RMS подгоняется к ${M.targetRms.toFixed(1)} дБ, потолок ${M.lim.ceiling.toFixed(1)} dBTP` : `Авто RMS выключен, вход лимитера ${fmtDb(M.lim.gain)} дБ, потолок ${M.lim.ceiling.toFixed(1)} dBTP`, M.fades ? ', фейды 50 мс.' : '.'),
+    el('p', { class: 'note' }, M.autoRms ? `RMS подгоняется к ${M.targetRms.toFixed(1)} дБ, потолок ${M.lim.ceiling.toFixed(1)} dBTP` : `Авто RMS выключен, порог лимитера ${fmtDb(M.lim.thresh)} дБ, потолок ${M.lim.ceiling.toFixed(1)} dBTP`, M.fades ? ', фейды 50 мс.' : '.'),
     res);
   const go = async (encode) => {
     stop();
@@ -1219,7 +1290,7 @@ async function openExport() {
     bRun.disabled = bAn.disabled = true;
     await Promise.all(P.clips.map((c) => ensureBuffer(c.src)));
     res.innerHTML = '';
-    const table = el('table', { class: 'stats' }, el('thead', {}, el('tr', {}, ...['Регион', 'RMS', 'L / R', 'Peak', 'True peak', 'LUFS-I', 'Вход лим.'].map((h) => el('th', {}, h)))));
+    const table = el('table', { class: 'stats' }, el('thead', {}, el('tr', {}, ...['Регион', 'RMS', 'L / R', 'Peak', 'True peak', 'LUFS-I', 'Порог лим.'].map((h) => el('th', {}, h)))));
     const tb = el('tbody'); table.append(tb);
     res.append(el('div', { class: 'tablewrap' }, table));
     const files = [];
@@ -1231,7 +1302,7 @@ async function openExport() {
         const okTp = stats.tp <= M.lim.ceiling + 0.05;
         const missed = M.autoRms && stats.rms > -70 && Math.abs(stats.rms - M.targetRms) > 0.3;
         row.append(el('td', { class: 'mono' + (missed ? ' bad' : ''), title: missed ? 'Цель не достигнута: лимитер упёрся в предел. Проверь, нет ли в регионе тишины.' : null }, fmtDb(stats.rms, 2)), el('td', { class: 'mono dim' }, `${fmtDb(stats.rmsL)} / ${fmtDb(stats.rmsR)}`), el('td', { class: 'mono' }, fmtDb(stats.peak, 2)),
-          el('td', { class: 'mono ' + (okTp ? 'ok' : 'bad') }, fmtDb(stats.tp, 2)), el('td', { class: 'mono' }, fmtDb(stats.lufs, 1)), el('td', { class: 'mono dim' }, fmtDb(stats.gain)));
+          el('td', { class: 'mono ' + (okTp ? 'ok' : 'bad') }, fmtDb(stats.tp, 2)), el('td', { class: 'mono' }, fmtDb(stats.lufs, 1)), el('td', { class: 'mono dim' }, fmtDb(-stats.gain)));
         if (encode) {
           const blob = fmt === 'mp3' ? await encodeMp3(ch) : encodeWav24(ch);
           const name = `${sanitize(P.name)}_${sanitize(r.name)}.${fmt}`;
@@ -1247,16 +1318,16 @@ async function openExport() {
   const bRun = el('button', { class: 'btn primary', onclick: () => go(true) }, 'Рендер');
   modal('Экспорт регионов', body, [bAn, bRun]);
 }
-function filesPanel(files) {
+function filesPanel(files, title = 'Файлы готовы') {
   const urls = files.map((f) => URL.createObjectURL(f));
   const canShare = !!(navigator.canShare && navigator.canShare({ files }));
   return el('div', { class: 'files' },
-    el('h4', {}, 'Файлы готовы'),
+    el('h4', {}, title),
     ...files.map((f, i) => el('div', { class: 'frow' },
       el('span', { class: 'mono' }, f.name), el('small', { class: 'dim' }, (f.size / 1048576).toFixed(2) + ' МБ'),
       el('a', { class: 'btn small', href: urls[i], download: f.name }, 'Скачать'))),
     el('div', { class: 'btns' },
-      canShare ? el('button', { class: 'btn primary', onclick: async () => { try { await navigator.share({ files, title: P.name }); } catch (e) { if (e.name !== 'AbortError') toast('Не получилось открыть «Поделиться»: ' + e.message); } } }, 'Поделиться (Облако, Telegram, почта)') : el('p', { class: 'note' }, 'Этот браузер не умеет делиться файлами. Скачай их кнопками выше.'),
+      canShare ? el('button', { class: 'btn primary', onclick: async () => { try { await navigator.share({ files, title: files.length === 1 ? files[0].name : P.name }); } catch (e) { if (e.name !== 'AbortError') toast('Не получилось открыть «Поделиться»: ' + e.message); } } }, 'Поделиться (Облако, Telegram, почта)') : el('p', { class: 'note' }, 'Этот браузер не умеет делиться файлами. Скачай их кнопками выше.'),
       el('button', { class: 'btn', onclick: () => copyText(files.map((f) => f.name).join('\n'), 'Имена файлов скопированы') }, 'Копировать имена файлов')));
 }
 
@@ -1327,7 +1398,7 @@ async function importProjectFile(f) {
 /* ================= Boot ================= */
 async function loadProject(p) {
   stop(false);
-  P = p; S.sel.clear(); S.selRegion = null; S.inspector = 'none';
+  P = migrate(p); S.sel.clear(); S.selRegion = null; S.inspector = 'none';
   S.hist = []; S.hidx = -1; commit();
   ls.set('last', P.id);
   renderHeaders(); renderInspector(); updateToolbar(); resize();
@@ -1335,10 +1406,8 @@ async function loadProject(p) {
   if (P.clips.length) zoomFit(); else { S.pps = clamp((W - 30) / 70, 4, 200); S.x0 = -0.5; }
   redraw();
 }
-const ICON = {
-  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>',
-  stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></svg>',
-};
+
+
 function bindUI() {
   cv = $('#tl'); cx = cv.getContext('2d');
   cv.addEventListener('pointerdown', onDown); cv.addEventListener('pointermove', onMove);
@@ -1358,10 +1427,12 @@ function bindUI() {
   $('#bDel').onclick = deleteSel;
   $('#bUndo').onclick = undo; $('#bRedo').onclick = redo;
   $('#bSnap').onclick = () => { S.snap = !S.snap; ls.set('snap', S.snap); updateToolbar(); };
-  $('#bRipple').onclick = () => { S.ripple = !S.ripple; ls.set('ripple', S.ripple); updateToolbar(); renderInspector(); };
+  $('#bRipple').onclick = () => { S.ripple = !S.ripple; ls.set('ripple', S.ripple); updateToolbar(); renderBar(); };
   $('#bZin').onclick = () => zoom(1.5); $('#bZout').onclick = () => zoom(1 / 1.5); $('#bFit').onclick = zoomFit;
-  $('#bExport').onclick = openExport; $('#bRao').onclick = openRao; $('#bProj').onclick = openProjects; $('#projName').onclick = openProjects;
-  $('#bInsp').onclick = () => { $('#insp').classList.toggle('collapsed'); };
+  $('#bExport').onclick = openExport; $('#bRao').onclick = openRao; $('#projName').onclick = openProjects;
+  $('#bPresets').onclick = openPresets; $('#bConvert').onclick = openConverter;
+  $('#bMaster').onclick = () => openFx('master');
+  $('#mtitle').onclick = () => openFx('master');
   document.addEventListener('keydown', (e) => {
     if (e.target.matches('input[type=text], input[type=number], textarea, select')) return;
     const mod = e.metaKey || e.ctrlKey;
@@ -1376,17 +1447,131 @@ function bindUI() {
     else if (e.key === '=' || e.key === '+') zoom(1.5);
     else if (e.key === '-') zoom(1 / 1.5);
     else if (e.code === 'Home') seekTo(0);
-    else if (e.code === 'Escape') { S.sel.clear(); S.selRegion = null; closeModal(); renderInspector(); redraw(); }
+    else if (e.code === 'Escape') { if ($('#modal')) closeModal(); else { S.sel.clear(); S.selRegion = null; S.inspector = 'none'; renderBar(); redraw(); } }
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow().catch(() => {}); });
 }
 async function boot() {
   bindUI();
   try { await Store.open(); } catch (e) { toast('Хранилище браузера недоступно: проекты не сохранятся', 5000); }
-  await measureCompDelay();
   let p = null;
   try { const last = ls.get('last'); if (last) p = await Store.get('projects', last); } catch {}
   await loadProject(p || newProject());
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 window.addEventListener('DOMContentLoaded', boot);
+
+
+/* ================= Presets (whole-mix settings) ================= */
+// A preset keeps every track's processing, volume and pan plus the whole master chain; clips and regions stay untouched.
+const Presets = {
+  all() { const v = ls.get('presets', []); return Array.isArray(v) ? v : []; },
+  save(list) { ls.set('presets', list); },
+  getDefault() { const id = ls.get('presetDefault', null); return id ? this.all().find((p) => p.id === id) || null : null; },
+  setDefault(id) { ls.set('presetDefault', id); },
+};
+const PRESET_TRACK_KEYS = ['vol', 'pan', 'declick', 'eq', 'vox', 'deess', 'drive', 'duck'];
+function capturePreset(name) {
+  const tracks = {};
+  for (const t of P.tracks) { tracks[t.id] = {}; for (const k of PRESET_TRACK_KEYS) if (t[k] !== undefined) tracks[t.id][k] = JSON.parse(JSON.stringify(t[k])); }
+  const { format, ...master } = P.master;
+  return { id: uid(), name, created: Date.now(), v: 2, tracks, master: JSON.parse(JSON.stringify(master)) };
+}
+function applyPresetTo(p, pr) {
+  for (const t of p.tracks) { const src = pr.tracks && pr.tracks[t.id]; if (src) for (const k of PRESET_TRACK_KEYS) if (src[k] !== undefined) t[k] = JSON.parse(JSON.stringify(src[k])); }
+  if (pr.master) Object.assign(p.master, JSON.parse(JSON.stringify(pr.master)));
+  return p;
+}
+function openPresets() {
+  const body = el('div', {});
+  const list = Presets.all(), defId = ls.get('presetDefault', null);
+  const nameIn = el('input', { type: 'text', class: 'txt', id: 'presetName', placeholder: 'Например: «Радио, голос + музыка»', style: 'flex:1;min-width:12em' });
+  const mkDef = el('input', { type: 'checkbox', id: 'presetDef', checked: !list.length });
+  body.append(el('p', { class: 'note' }, 'Пресет запоминает обработку всех дорожек и мастера: FX, громкости, панораму, лимитер и целевой RMS. Клипы и регионы не трогает.'));
+  body.append(el('h4', {}, 'Сохранить текущие настройки'));
+  body.append(el('div', { class: 'btns' }, nameIn,
+    el('button', { class: 'btn primary', onclick: () => {
+      const name = nameIn.value.trim() || `Пресет ${new Date().toLocaleDateString('ru-RU')}`;
+      const pr = capturePreset(name), all = Presets.all();
+      const same = all.findIndex((x) => x.name === name);
+      if (same >= 0) { pr.id = all[same].id; all[same] = pr; } else all.push(pr);
+      Presets.save(all); if (mkDef.checked) Presets.setDefault(pr.id);
+      toast(same >= 0 ? 'Пресет обновлён' : 'Пресет сохранён'); openPresets();
+    } }, 'Сохранить')));
+  body.append(el('label', { class: 'tog' }, mkDef, el('span', {}, 'Использовать для всех новых проектов')));
+  body.append(el('h4', {}, 'Мои пресеты'));
+  if (!list.length) body.append(el('p', { class: 'note' }, 'Пока пусто. Настрой обработку один раз и сохрани её здесь.'));
+  for (const pr of list) {
+    const isDef = pr.id === defId;
+    const conf = el('span', { class: 'confirm', hidden: true }, 'Удалить? ',
+      el('button', { class: 'btn small danger', onclick: () => { Presets.save(Presets.all().filter((x) => x.id !== pr.id)); if (isDef) Presets.setDefault(null); openPresets(); } }, 'Да'),
+      el('button', { class: 'btn small', onclick: (e) => { e.target.parentElement.hidden = true; } }, 'Нет'));
+    body.append(el('div', { class: 'frow' + (isDef ? ' cur' : '') },
+      el('b', { class: 'plink' }, (isDef ? '★ ' : '') + pr.name),
+      el('small', { class: 'dim' }, new Date(pr.created).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })),
+      el('button', { class: 'btn small primary', onclick: () => { applyPresetTo(P, pr); commit(); applyLive(); renderTCP(); toast(`Применён «${pr.name}»`); closeModal(); } }, 'Применить'),
+      el('button', { class: 'btn small', onclick: () => { Presets.setDefault(isDef ? null : pr.id); openPresets(); } }, isDef ? 'Убрать по умолчанию' : 'По умолчанию'),
+      el('button', { class: 'btn small', onclick: () => { const f = new File([JSON.stringify(pr, null, 1)], sanitize(pr.name) + '.efirpreset', { type: 'application/json' }); modal('Файл пресета', filesPanel([f], 'Пресет для переноса на другое устройство')); } }, 'В файл'),
+      el('button', { class: 'btn small', onclick: () => { conf.hidden = false; } }, 'Удалить'), conf));
+  }
+  const fileIn = el('input', { type: 'file', accept: '.efirpreset,application/json', hidden: true, onchange: async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const pr = JSON.parse(await f.text());
+      if (!pr || !pr.tracks || !pr.master) throw new Error('bad');
+      pr.id = uid(); const all = Presets.all(); all.push(pr); Presets.save(all); toast(`Добавлен «${pr.name}»`); openPresets();
+    } catch { toast('Это не файл пресета Эфира'); }
+  } });
+  body.append(el('div', { class: 'btns' }, el('button', { class: 'btn', onclick: () => fileIn.click() }, 'Открыть файл пресета'), fileIn,
+    el('button', { class: 'btn', onclick: () => { applyPresetTo(P, { tracks: Object.fromEntries(baseProject('').tracks.map((t) => [t.id, t])), master: baseProject('').master }); commit(); applyLive(); renderTCP(); toast('Вернул заводские настройки'); closeModal(); } }, 'Заводские настройки')));
+  modal('Пресеты', body);
+}
+
+/* ================= Converter (any audio → MP3 / WAV) ================= */
+function openConverter() {
+  const st = { files: [], kbps: ls.get('convKbps', 320), sr: ls.get('convSr', 44100), fmt: ls.get('convFmt', 'mp3') };
+  const body = el('div', {});
+  const listBox = el('div', { class: 'files' });
+  const fileIn = el('input', { type: 'file', multiple: true, accept: 'audio/*,.wav,.mp3,.aif,.aiff,.m4a,.flac,.ogg,.aac,.wma,video/*', hidden: true, onchange: (e) => { st.files.push(...e.target.files); e.target.value = ''; renderList(); } });
+  const res = el('div', {});
+  const renderList = () => {
+    listBox.innerHTML = '';
+    if (!st.files.length) listBox.append(el('p', { class: 'note' }, 'Файлы не выбраны. Подойдут WAV, AIFF, M4A, MP3, FLAC и звук из видео.'));
+    st.files.forEach((f, i) => listBox.append(el('div', { class: 'frow' }, el('span', { class: 'mono' }, f.name), el('small', { class: 'dim' }, (f.size / 1048576).toFixed(1) + ' МБ'),
+      el('button', { class: 'x', 'aria-label': 'Убрать', onclick: () => { st.files.splice(i, 1); renderList(); } }, '×'))));
+    go.disabled = !st.files.length;
+  };
+  const opt = (name, options, key) => el('div', { class: 'seg' }, ...options.map(([v, t]) => el('label', {}, el('input', { type: 'radio', name, value: v, checked: String(st[key]) === String(v), onchange: () => { st[key] = isNaN(+v) ? v : +v; ls.set('conv' + key[0].toUpperCase() + key.slice(1), st[key]); kb.hidden = st.fmt !== 'mp3'; } }), el('span', {}, t))));
+  const kb = el('div', {}, el('h4', {}, 'Битрейт'), opt('kbps', [[320, '320 kbps'], [256, '256'], [192, '192'], [128, '128']], 'kbps'));
+  kb.hidden = st.fmt !== 'mp3';
+  const go = el('button', { class: 'btn primary', onclick: async () => {
+    go.disabled = true; res.innerHTML = '';
+    const out = [], log = el('div', { class: 'files' }); res.append(log);
+    for (const f of st.files) {
+      const row = el('div', { class: 'frow' }, el('span', { class: 'mono' }, f.name), el('small', { class: 'dim' }, 'декодирую…')); log.append(row);
+      try {
+        const ctx = new OfflineAudioContext(2, 1, st.sr);
+        const buf = await ctx.decodeAudioData(await f.arrayBuffer());
+        const ch = []; for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) ch.push(buf.getChannelData(c));
+        const base = f.name.replace(/\.[^.]+$/, '');
+        let blob;
+        if (st.fmt === 'mp3') blob = await encodeMp3(ch, st.sr, st.kbps, (p) => { row.lastChild.textContent = 'кодирую ' + Math.round(p * 100) + '%'; });
+        else blob = encodeWav24At(ch, st.sr);
+        out.push(new File([blob], `${base}.${st.fmt}`, { type: blob.type }));
+        row.lastChild.textContent = `${buf.duration.toFixed(1)} с · ${(blob.size / 1048576).toFixed(2)} МБ`; row.lastChild.className = 'ok';
+      } catch (e) { console.error(e); row.lastChild.textContent = /Нет связи/.test(e.message) ? e.message : 'не удалось прочитать файл'; row.lastChild.className = 'bad'; }
+    }
+    if (out.length) res.append(filesPanel(out, 'Готово'));
+    go.disabled = false;
+  } }, 'Конвертировать');
+  body.append(
+    el('div', { class: 'btns' }, el('button', { class: 'btn', onclick: () => fileIn.click() }, '+ Выбрать файлы'), fileIn),
+    listBox,
+    el('h4', {}, 'Формат'), opt('fmt', [['mp3', 'MP3'], ['wav', 'WAV 24 бит']], 'fmt'),
+    kb,
+    el('h4', {}, 'Частота'), opt('sr', [[44100, '44.1 кГц'], [48000, '48 кГц']], 'sr'),
+    el('p', { class: 'note' }, 'Конвертирует без обработки: громкость и звук не меняются. Стерео остаётся стерео, моно — моно.'),
+    res);
+  modal('Конвертер', body, [go]);
+  renderList();
+}

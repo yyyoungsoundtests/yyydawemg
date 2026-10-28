@@ -1,4 +1,34 @@
-// ===== AudioWorklet processors: spectral ducker + true-peak limiter =====
+// ===== Эфир: AudioWorklet processors =====
+// Fixed latencies (samples), mirrored in app.js: DECLICK 64, DEESS 720, DUCKER 1024, LIMITER 69.
+const dbLin = (d) => Math.pow(10, d / 20);
+const linDb = (l) => 20 * Math.log10(Math.max(l, 1e-9));
+const tc = (ms) => 1 - Math.exp(-1 / (Math.max(0.01, ms) / 1000 * sampleRate));
+function knee(over, ratio, w) {
+  const k = 1 - 1 / ratio;
+  if (over <= -w / 2) return 0;
+  if (over >= w / 2) return over * k;
+  const x = over + w / 2; return k * x * x / (2 * w);
+}
+class BQ {
+  constructor() { this.b0 = 1; this.b1 = this.b2 = this.a1 = this.a2 = 0; this.z1 = this.z2 = 0; }
+  set(type, f, q = 0.7071) {
+    const w = 2 * Math.PI * Math.min(Math.max(f, 10), sampleRate * 0.45) / sampleRate, cs = Math.cos(w), sn = Math.sin(w), al = sn / (2 * q);
+    let b0, b1, b2; const a0 = 1 + al, a1 = -2 * cs, a2 = 1 - al;
+    if (type === 'lp') { b0 = (1 - cs) / 2; b1 = 1 - cs; b2 = b0; }
+    else { b0 = (1 + cs) / 2; b1 = -(1 + cs); b2 = b0; }
+    this.b0 = b0 / a0; this.b1 = b1 / a0; this.b2 = b2 / a0; this.a1 = a1 / a0; this.a2 = a2 / a0;
+    return this;
+  }
+  run(x) { const y = this.b0 * x + this.z1; this.z1 = this.b1 * x - this.a1 * y + this.z2; this.z2 = this.b2 * x - this.a2 * y; return y; }
+}
+// Linkwitz-Riley 4th order split; lo+hi is an allpass
+class LR4 {
+  constructor() { this.l1 = new BQ(); this.l2 = new BQ(); this.h1 = new BQ(); this.h2 = new BQ(); }
+  set(f) { this.l1.set('lp', f); this.l2.set('lp', f); this.h1.set('hp', f); this.h2.set('hp', f); }
+  split(x) { this.lo = this.l2.run(this.l1.run(x)); this.hi = this.h2.run(this.h1.run(x)); }
+  ap(x) { this.split(x); return this.lo + this.hi; }
+}
+
 function makeFFT(n) {
   const rev = new Uint32Array(n), cos = new Float32Array(n / 2), sin = new Float32Array(n / 2);
   const bits = Math.log2(n);
@@ -120,7 +150,7 @@ class EfirDucker extends AudioWorkletProcessor {
     for (let i = 0; i < N; i++) acc[i] += re[i] * w[i] * 0.5;
     this.outQ.set(acc.subarray(0, H));
     acc.copyWithin(0, H); acc.fill(0, N - H);
-    if (++this.frames % 8 === 0) this.port.postMessage({ gr: maxR });
+    if (++this.frames % 8 === 0) this.port.postMessage({ gr: maxR, bands: Array.from(red), freqs: this.bF });
   }
   process(inputs, outputs) {
     if (this.p.dead) return false;
@@ -161,7 +191,8 @@ class EfirLimiter extends AudioWorkletProcessor {
     this.qv = new Float32Array(this.SZ); this.qi = new Float64Array(this.SZ); this.qh = 0; this.qt = 0; this.n = 0;
     this.ring = new Float32Array(this.LA).fill(1); this.rp = 0; this.sum = this.LA;
     this.e = 1; this.minEnv = 1; this.cntr = 0;
-    this.p = Object.assign({ gain: 0, ceiling: -1, release: 80 }, options && options.processorOptions && options.processorOptions.p);
+    this.p = Object.assign({ gain: 0, ceiling: -1, release: 80, arc: true }, options && options.processorOptions && options.processorOptions.p);
+    this.slow = 0;
     this.coefs();
     this.port.onmessage = (e) => { Object.assign(this.p, e.data); this.coefs(); };
   }
@@ -177,6 +208,13 @@ class EfirLimiter extends AudioWorkletProcessor {
     const iL = inp[0], iR = inp[1] || inp[0];
     const oL = out[0], oR = out[1] || out[0];
     const SZ = this.SZ, LA = this.LA, ceil = this.ceil, ci = this.ceilIn;
+    if (this.p.arc) {
+      // Auto release: longer release when the limiter has been working for a while (less pumping)
+      const grNow = -20 * Math.log10(Math.max(1e-6, this.e));
+      this.slow += (grNow - this.slow) * 0.02;
+      const ms = Math.max(5, this.p.release) * (0.8 + Math.min(1.2, this.slow / 10));
+      this.rel = 1 - Math.exp(-1 / (ms / 1000 * sampleRate));
+    }
     for (let i = 0; i < oL.length; i++) {
       const x0 = iL ? iL[i] * this.g : 0, x1 = iR ? iR[i] * this.g : 0;
       this.dl[0][this.wi] = x0; this.dl[1][this.wi] = x1;
@@ -213,3 +251,267 @@ class EfirLimiter extends AudioWorkletProcessor {
   }
 }
 registerProcessor('efir-limiter', EfirLimiter);
+
+// ---------- De-crackle (light click repair). Latency 64 ----------
+class EfirDeclick extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.p = Object.assign({ on: true, amount: 3, quality: 1, only: false }, o && o.processorOptions && o.processorOptions.p);
+    this.SZ = 256; this.L = 64;
+    this.buf = [new Float32Array(256), new Float32Array(256)]; this.org = [new Float32Array(256), new Float32Array(256)];
+    this.lev = [0.001, 0.001]; this.w = 0; this.clicks = 0; this.cnt = 0;
+    this.port.onmessage = (e) => Object.assign(this.p, e.data);
+  }
+  process(inputs, outputs) {
+    if (this.p.dead) return false;
+    const inp = inputs[0] || [], out = outputs[0], SZ = this.SZ, M = SZ - 1, p = this.p;
+    const k = 16 - Math.min(10, Math.max(0, p.amount)), hw = [0, 1, 2][p.quality | 0] ?? 1;
+    for (let i = 0; i < out[0].length; i++) {
+      const w = this.w;
+      for (let c = 0; c < 2; c++) {
+        const ch = inp[c] || inp[0], x = ch ? ch[i] : 0, b = this.buf[c];
+        b[w] = x; this.org[c][w] = x;
+        if (p.on) {
+          const q = (w - 8) & M;
+          const e = Math.abs(b[q] - 0.5 * (b[(q - 1) & M] + b[(q + 1) & M]));
+          if (e > k * this.lev[c] + 0.004) {
+            const a = (q - hw - 1) & M, z = (q + hw + 1) & M, n = 2 * hw + 2;
+            for (let j = 1; j < n; j++) b[(a + j) & M] = b[a] + (b[z] - b[a]) * j / n;
+            this.clicks++;
+          } else this.lev[c] += (e - this.lev[c]) * 0.003;
+        }
+        const r = (w - this.L) & M;
+        const o = out[c] || out[0];
+        o[i] = p.on && p.only ? this.org[c][r] - b[r] : b[r];
+      }
+      this.w = (w + 1) & M;
+    }
+    if (++this.cnt % 94 === 0) { this.port.postMessage({ cps: this.clicks / 2 }); this.clicks = 0; }
+    return true;
+  }
+}
+registerProcessor('efir-declick', EfirDeclick);
+
+// ---------- Vocal leveler (gate + one-knob compressor + safety limiter). No latency ----------
+class EfirVox extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.p = Object.assign({ on: true, gate: -80, comp: -12, gain: 0 }, o && o.processorOptions && o.processorOptions.p);
+    this.pw = 0; this.gr = 0; this.gg = 0; this.hold = 0; this.cnt = 0; this.mx = 0; this.out = 0;
+    this.a10 = tc(10); this.aA = tc(5); this.aR = tc(160); this.gA = tc(2); this.gR = tc(150);
+    this.port.onmessage = (e) => Object.assign(this.p, e.data);
+  }
+  process(inputs, outputs) {
+    if (this.p.dead) return false;
+    const inp = inputs[0] || [], out = outputs[0], p = this.p;
+    const iL = inp[0], iR = inp[1] || inp[0], oL = out[0], oR = out[1] || out[0];
+    // the Comp fader works like a one-knob leveller: threshold sits 8 dB under it, make-up follows automatically
+    const thr = p.comp - 8, make = -thr * 0.38, og = dbLin(p.gain);
+    for (let i = 0; i < oL.length; i++) {
+      let l = iL ? iL[i] : 0, r = iR ? iR[i] : 0;
+      if (p.on) {
+        const m = 0.5 * (l * l + r * r);
+        this.pw += (m - this.pw) * this.a10;
+        const lvl = 10 * Math.log10(this.pw + 1e-12);
+        // gate (downward expander, 30 dB range, 60 ms hold)
+        let gt = 0;
+        if (p.gate > -79) {
+          if (lvl > p.gate) this.hold = 0.06 * sampleRate; else if (this.hold > 0) this.hold--;
+          gt = this.hold > 0 ? 0 : 30;
+        }
+        this.gg += (gt - this.gg) * (gt < this.gg ? this.gA : this.gR);
+        const t = knee(lvl - thr, 4, 8);
+        this.gr += (t - this.gr) * (t > this.gr ? this.aA : this.aR);
+        const g = dbLin(-this.gr - this.gg + make) * og;
+        l *= g; r *= g;
+        // soft safety limiter at -0.3 dBFS
+        const lim = 0.966;
+        if (l > lim || l < -lim) l = Math.sign(l) * (lim + (1 - lim) * Math.tanh((Math.abs(l) - lim) / (1 - lim)));
+        if (r > lim || r < -lim) r = Math.sign(r) * (lim + (1 - lim) * Math.tanh((Math.abs(r) - lim) / (1 - lim)));
+        if (this.gr > this.mx) this.mx = this.gr;
+        const a = Math.max(Math.abs(l), Math.abs(r)); if (a > this.out) this.out = a;
+      }
+      oL[i] = l; if (oR !== oL) oR[i] = r;
+    }
+    if (++this.cnt % 8 === 0) { this.port.postMessage({ gr: this.mx, gate: this.gg > 15, out: linDb(this.out) }); this.mx = 0; this.out = 0; }
+    return true;
+  }
+}
+registerProcessor('efir-vox', EfirVox);
+
+// ---------- De-esser (wide/split band, allround/single vocal). Latency 720 ----------
+class EfirDeess extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.p = Object.assign({ on: true, thr: -20, range: 6, f1: 5500, f2: 12000, mode: 'vocal', band: 'split', link: 1, look: 5 }, o && o.processorOptions && o.processorOptions.p);
+    this.D = 720; this.SZ = 1024;
+    this.ring = [new Float32Array(1024), new Float32Array(1024)]; this.w = 0;
+    this.det = [[new BQ(), new BQ(), new BQ()], [new BQ(), new BQ(), new BQ()]];
+    this.split = [new LR4(), new LR4()];
+    this.pb = [0, 0]; this.pf = [0, 0]; this.gr = [0, 0];
+    this.aP = tc(1); this.aA = tc(0.5); this.aR = tc(45);
+    this.cnt = 0; this.mx = 0; this.lv = -120;
+    this.coefs();
+    this.port.onmessage = (e) => { Object.assign(this.p, e.data); this.coefs(); };
+  }
+  coefs() {
+    const p = this.p;
+    for (const d of this.det) { d[0].set('hp', p.f1); d[1].set('hp', p.f1); d[2].set('lp', Math.max(p.f2, p.f1 * 1.05)); }
+    for (const s of this.split) s.set(p.f1);
+    this.la = Math.round(Math.min(15, Math.max(0, p.look)) / 1000 * sampleRate);
+    if (this.la > this.D) this.la = this.D;
+  }
+  process(inputs, outputs) {
+    if (this.p.dead) return false;
+    const inp = inputs[0] || [], out = outputs[0], p = this.p, M = this.SZ - 1, D = this.D;
+    const iL = inp[0], iR = inp[1] || inp[0], oL = out[0], oR = out[1] || out[0];
+    for (let i = 0; i < oL.length; i++) {
+      const w = this.w;
+      this.ring[0][w] = iL ? iL[i] : 0; this.ring[1][w] = iR ? iR[i] : 0;
+      const dq = (w - (D - this.la)) & M, rq = (w - D) & M;
+      const dl = this.ring[0][dq], dr = this.ring[1][dq], mid = 0.5 * (dl + dr);
+      for (let c = 0; c < 2; c++) {
+        const x = (c ? dr : dl) * (1 - p.link) + mid * p.link;
+        const f = this.det[c], b = f[2].run(f[1].run(f[0].run(x)));
+        this.pb[c] += (b * b - this.pb[c]) * this.aP;
+        this.pf[c] += (x * x - this.pf[c]) * this.aP;
+        const lvl = 10 * Math.log10(this.pb[c] + 1e-12);
+        let over = lvl - p.thr;
+        if (p.mode === 'vocal') {
+          const rel = lvl - 10 * Math.log10(this.pf[c] + 1e-12);
+          over *= Math.min(1, Math.max(0, (rel + 14) / 10));
+        }
+        const t = p.on ? Math.min(p.range, Math.max(0, over)) : 0;
+        this.gr[c] += (t - this.gr[c]) * (t > this.gr[c] ? this.aA : this.aR);
+        if (lvl > this.lv) this.lv = lvl;
+      }
+      let yl = this.ring[0][rq], yr = this.ring[1][rq];
+      const gl = dbLin(-this.gr[0]), gr = dbLin(-this.gr[1]);
+      if (p.band === 'split') {
+        // LR4 split: lo + hi is flat, only the band above f1 is turned down
+        const a = this.split[0], b = this.split[1];
+        a.split(yl); b.split(yr);
+        yl = a.lo + a.hi * gl; yr = b.lo + b.hi * gr;
+      } else { yl *= gl; yr *= gr; }
+      oL[i] = yl; if (oR !== oL) oR[i] = yr;
+      const g = Math.max(this.gr[0], this.gr[1]); if (g > this.mx) this.mx = g;
+      this.w = (w + 1) & M;
+    }
+    if (++this.cnt % 4 === 0) { this.port.postMessage({ gr: this.mx, lvl: this.lv }); this.mx = 0; this.lv = -120; }
+    return true;
+  }
+}
+registerProcessor('efir-deess', EfirDeess);
+
+// ---------- 4-band dynamics (compressor + limiter per band), LR4 crossovers. No latency ----------
+class EfirMB extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.p = Object.assign({ on: true, xo: [100, 580, 4500], bands: [] }, o && o.processorOptions && o.processorOptions.p);
+    this.ch = [0, 1].map(() => ({ mid: new LR4(), lo: new LR4(), hi: new LR4(), apLo: new LR4(), apHi: new LR4() }));
+    this.st = [0, 1, 2, 3].map(() => ({ gc: 0, gl: 0 }));
+    this.mx = new Float32Array(4); this.lv = new Float32Array(4).fill(-120); this.cnt = 0;
+    this.coefs();
+    this.port.onmessage = (e) => { Object.assign(this.p, e.data); this.coefs(); };
+  }
+  coefs() {
+    const [f1, f2, f3] = this.p.xo;
+    for (const c of this.ch) { c.mid.set(f2); c.lo.set(f1); c.hi.set(f3); c.apLo.set(f3); c.apHi.set(f1); }
+    this.k = this.p.bands.map((b) => ({ cA: tc(b.cAtt), cR: tc(b.cRel), lA: tc(b.lAtt), lR: tc(b.lRel), g: dbLin(b.gain || 0), mix: (b.mix ?? 100) / 100 }));
+  }
+  process(inputs, outputs) {
+    if (this.p.dead) return false;
+    const inp = inputs[0] || [], out = outputs[0], p = this.p;
+    const iL = inp[0], iR = inp[1] || inp[0], oL = out[0], oR = out[1] || out[0];
+    const B = p.bands, K = this.k;
+    const bl = [0, 0, 0, 0], br = [0, 0, 0, 0];
+    for (let i = 0; i < oL.length; i++) {
+      const xl = iL ? iL[i] : 0, xr = iR ? iR[i] : 0;
+      if (!p.on || B.length < 4) { oL[i] = xl; if (oR !== oL) oR[i] = xr; continue; }
+      for (let c = 0; c < 2; c++) {
+        const f = this.ch[c], dst = c ? br : bl;
+        f.mid.split(c ? xr : xl);
+        const lo = f.apLo.ap(f.mid.lo), hi = f.apHi.ap(f.mid.hi);
+        f.lo.split(lo); f.hi.split(hi);
+        dst[0] = f.lo.lo; dst[1] = f.lo.hi; dst[2] = f.hi.lo; dst[3] = f.hi.hi;
+      }
+      let yl = 0, yr = 0;
+      for (let b = 0; b < 4; b++) {
+        const s = this.st[b], cfg = B[b], kk = K[b];
+        const a = Math.max(Math.abs(bl[b]), Math.abs(br[b])), lvl = linDb(a);
+        if (lvl > this.lv[b]) this.lv[b] = lvl;
+        let g = 1;
+        if (cfg.on !== false) {
+          const tcmp = knee(lvl - cfg.cThr, cfg.cRatio, 6);
+          s.gc += (tcmp - s.gc) * (tcmp > s.gc ? kk.cA : kk.cR);
+          const tl = knee(lvl - s.gc - cfg.lThr, cfg.lRatio, 2);
+          s.gl += (tl - s.gl) * (tl > s.gl ? kk.lA : kk.lR);
+          const gr = s.gc + s.gl; if (gr > this.mx[b]) this.mx[b] = gr;
+          g = (1 - kk.mix) + kk.mix * dbLin(-gr) * kk.g;
+        }
+        yl += bl[b] * g; yr += br[b] * g;
+      }
+      oL[i] = yl; if (oR !== oL) oR[i] = yr;
+    }
+    if (++this.cnt % 8 === 0) { this.port.postMessage({ gr: Array.from(this.mx), lvl: Array.from(this.lv) }); this.mx.fill(0); this.lv.fill(-120); }
+    return true;
+  }
+}
+registerProcessor('efir-mb', EfirMB);
+
+// ---------- Opto + discrete (VCA) mastering compressor with transformer colour. No latency ----------
+class EfirSH extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.p = Object.assign({ on: true, oOn: true, oThr: -12, oGain: 0, dOn: true, dThr: -12, dRatio: 3, dAtt: 30, dRec: 0.1, dGain: 0, xf: 0, mix: 1 }, o && o.processorOptions && o.processorOptions.p);
+    this.pw = 0; this.of = 0; this.os = 0; this.df = 0; this.ds = 0; this.dc = [0, 0, 0, 0];
+    this.cnt = 0; this.mo = 0; this.md = 0;
+    this.coefs();
+    this.port.onmessage = (e) => { Object.assign(this.p, e.data); this.coefs(); };
+  }
+  coefs() {
+    const p = this.p;
+    this.aRms = tc(5); this.oA = tc(10); this.oR = tc(70); this.sA = tc(250); this.sR = tc(1800);
+    this.dA = tc(p.dAtt); this.dual = p.dRec < 0;
+    this.dR = tc(this.dual ? 100 : p.dRec * 1000); this.dsA = tc(300); this.dsR = tc(1200);
+    this.og = dbLin(p.oGain); this.dg = dbLin(p.dGain);
+    this.drive = [0.55, 0.9, 1.3][p.xf | 0] || 0.55; this.even = [0.01, 0.04, 0.07][p.xf | 0] || 0.01;
+    this.dcA = tc(1000 / (2 * Math.PI * 12) );
+  }
+  sat(x, c) {
+    const k = this.drive, y = Math.tanh(k * x) / k + this.even * x * x;
+    this.dc[c] += (y - this.dc[c]) * 0.0016; // DC blocker (~12 Hz)
+    return y - this.dc[c];
+  }
+  process(inputs, outputs) {
+    if (this.p.dead) return false;
+    const inp = inputs[0] || [], out = outputs[0], p = this.p;
+    const iL = inp[0], iR = inp[1] || inp[0], oL = out[0], oR = out[1] || out[0];
+    for (let i = 0; i < oL.length; i++) {
+      const xl = iL ? iL[i] : 0, xr = iR ? iR[i] : 0;
+      if (!p.on) { oL[i] = xl; if (oR !== oL) oR[i] = xr; continue; }
+      let l = xl, r = xr;
+      if (p.oOn) {
+        this.pw += (0.5 * (l * l + r * r) - this.pw) * this.aRms;
+        const t = knee(10 * Math.log10(this.pw + 1e-12) - p.oThr, 2.5, 10);
+        this.of += (t - this.of) * (t > this.of ? this.oA : this.oR);
+        this.os += (t - this.os) * (t > this.os ? this.sA : this.sR);
+        const gr = Math.max(this.of, this.os); if (gr > this.mo) this.mo = gr;
+        const g = dbLin(-gr) * this.og; l *= g; r *= g;
+      }
+      if (p.dOn) {
+        const t = knee(linDb(Math.max(Math.abs(l), Math.abs(r))) - p.dThr, p.dRatio, 4);
+        this.df += (t - this.df) * (t > this.df ? this.dA : this.dR);
+        let gr = this.df;
+        if (this.dual) { this.ds += (t - this.ds) * (t > this.ds ? this.dsA : this.dsR); gr = Math.max(this.df, this.ds); }
+        if (gr > this.md) this.md = gr;
+        const g = dbLin(-gr) * this.dg; l *= g; r *= g;
+      }
+      l = this.sat(l, 0); r = this.sat(r, 1);
+      oL[i] = xl * (1 - p.mix) + l * p.mix; if (oR !== oL) oR[i] = xr * (1 - p.mix) + r * p.mix;
+    }
+    if (++this.cnt % 8 === 0) { this.port.postMessage({ o: this.mo, d: this.md }); this.mo = 0; this.md = 0; }
+    return true;
+  }
+}
+registerProcessor('efir-sh', EfirSH);
