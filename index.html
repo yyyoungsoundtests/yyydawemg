@@ -58,6 +58,8 @@ button { cursor: pointer; }
 .tcpTop span { font-weight: 600; color: var(--fg); }
 .tcp { display: grid; grid-template-columns: 20px 1fr 28px; border-bottom: 1px solid var(--line); background: var(--tcp); box-shadow: inset 3px 0 0 var(--tc); }
 .tcp.muted { background: #343536; }
+#heads.compact .tcp:not(.master) .trow.sub { display: none; }
+#heads.compact .tmain { gap: 3px; padding-block: 3px; }
 .tcp.master { background: #2E3032; box-shadow: inset 3px 0 0 #E8E4DA; border-top: 2px solid #121314; }
 .tcp.master .tnum { color: #E8E4DA; font-weight: 700; }
 .tcp.master .tname { letter-spacing: .08em; }

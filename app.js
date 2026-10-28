@@ -1547,7 +1547,7 @@ const refreshInspectorValues = () => refreshBar();
 
 function renderTCP() {
   if (!P) return;
-  const h = $('#heads'); h.innerHTML = ''; h.scrollLeft = 0;
+  const h = $('#heads'); h.innerHTML = ''; h.scrollLeft = 0; h.classList.toggle('compact', laneH < 84);
   h.append(el('div', { class: 'tcpTop', style: `height:${TOP}px` }, el('span', {}, 'Дорожки'), el('button', { class: 'addtrack', onclick: openAddTrack }, '+ Дорожка')));
   const anySolo = P.tracks.some((k) => k.solo);
   P.tracks.forEach((t, i) => {
@@ -1586,23 +1586,22 @@ function renderTCP() {
     el('div', { class: 'tms' })));
   redraw();
 }
-// Extra mono tracks: voice-type (full voice chain, ducks the music) or SFX-type (EQ only)
+// Extra tracks: plain tracks with an EQ only, mono or stereo, up to 5
+const MAX_EXTRA = 5;
 function openAddTrack() {
-  const add = (kind) => {
+  const extra = P.tracks.filter((t) => t.custom).length;
+  if (extra >= MAX_EXTRA) { toast(`Можно добавить не больше ${MAX_EXTRA} дорожек`); return; }
+  const add = (mono) => {
     const n = P.tracks.filter((t) => t.custom).length;
-    const id = 't' + uid(), base = kind === 'voice' ? 'VOICE' : 'SFX';
-    const same = P.tracks.filter((t) => t.name.startsWith(base)).length;
-    const t = kind === 'voice'
-      ? { id, name: `${base} ${same + 1}`, kind: 'voice', custom: true, mono: true, color: EXTRA_COLORS[n % EXTRA_COLORS.length], vol: 0, pan: 0, mute: false, solo: false, declick: DEF.declick(), eq: { on: true, bands: defaultEQ('voice') }, vox: DEF.vox(-12), rcomp: DEF.rcomp(), la2a: DEF.la2a(), deess: DEF.deessVoice(), drive: { on: false, amount: 0 }, sends: DEF.sends() }
-      : { id, name: `${base} ${same + 1}`, kind: 'fx', custom: true, mono: true, color: EXTRA_COLORS[n % EXTRA_COLORS.length], vol: 0, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('fx') } };
-    const mi = P.tracks.findIndex((x) => x.kind === 'music');
-    if (kind === 'voice') P.tracks.splice(mi >= 0 ? mi : P.tracks.length, 0, t); else P.tracks.push(t);
-    stop(false); commit(); closeModal(); resize(); toast(`Добавлена моно-дорожка ${t.name}`);
+    let k = 1; while (P.tracks.some((t) => t.name === `TRACK ${k}`)) k++;
+    const t = { id: 't' + uid(), name: `TRACK ${k}`, kind: 'fx', custom: true, mono, color: EXTRA_COLORS[n % EXTRA_COLORS.length], vol: 0, pan: 0, mute: false, solo: false, eq: { on: true, bands: defaultEQ('fx') } };
+    P.tracks.push(t);
+    stop(false); commit(); closeModal(); resize(); toast(`Добавлена ${mono ? 'моно' : 'стерео'}-дорожка ${t.name}`);
   };
-  modal('Новая моно-дорожка', el('div', { class: 'btns col' },
-    el('button', { class: 'btn big primary', onclick: () => add('voice') }, 'Голос (моно) — вся голосовая обработка, музыка под неё уступает'),
-    el('button', { class: 'btn big', onclick: () => add('fx') }, 'SFX (моно) — эквалайзер, для звуков и эффектов'),
-    el('p', { class: 'note' }, 'Всё, что кидаешь на эту дорожку, сводится в моно. Двойной тап по названию — переименовать, «×» — удалить дорожку.')));
+  modal('Новая дорожка', el('div', { class: 'btns col' },
+    el('button', { class: 'btn big primary', onclick: () => add(true) }, 'Моно'),
+    el('button', { class: 'btn big', onclick: () => add(false) }, 'Стерео'),
+    el('p', { class: 'note' }, `Пустая дорожка с эквалайзером. На моно-дорожке всё, что кидаешь, сводится в один канал. Можно добавить ещё ${MAX_EXTRA - extra}. Двойной тап по названию — переименовать, «×» — удалить.`)));
 }
 function renameTrack(t) {
   const row = [...document.querySelectorAll('.tcp .tname')].find((b) => b.textContent === t.name); if (!row) return;
