@@ -152,6 +152,8 @@ button { cursor: pointer; }
 .transport { position: relative; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: var(--bar); border-top: 1px solid var(--line); flex-wrap: wrap; }
 .tgrp { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
 .ttop #bPlay { height: 32px; }
+/* play/stop stays put while the top bar is scrolled sideways */
+.top .ttop { position: sticky; left: 0; z-index: 3; background: var(--bar); padding: 0 4px; margin: 0 -4px; box-shadow: 6px 0 8px -6px rgba(0,0,0,.7); }
 #bPlay { width: 44px; background: #DDE1E1; color: #1A1B1C; border-color: #111; }
 #bPlay.on { background: #3FAF63; color: #fff; }
 .tclock { display: flex; flex-direction: column; background: #121314; border: 1px solid #000; border-radius: 3px; padding: 2px 10px; min-width: 132px; }
@@ -623,9 +625,9 @@ button { cursor: pointer; }
   </footer>
 </div>
 <div id="toast" hidden></div>
-<script src="stretch.js?v=0.11.5"></script>
-<script src="fx.js?v=0.11.5"></script>
-<script src="app.js?v=0.11.5"></script>
-<script src="reaper.js?v=0.11.5"></script>
+<script src="stretch.js?v=0.11.6"></script>
+<script src="fx.js?v=0.11.6"></script>
+<script src="app.js?v=0.11.6"></script>
+<script src="reaper.js?v=0.11.6"></script>
 </body>
 </html>
