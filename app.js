@@ -2,7 +2,7 @@
 /* Эфир — монтаж и сведение радиороликов. Один файл логики, без сборки. */
 
 const SR = 48000;
-const APP_VERSION = '0.11.6';
+const APP_VERSION = '0.11.7';
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -342,7 +342,8 @@ async function importFiles(files, trackId, at) {
 let actx = null, workletReady = new WeakMap();
 function getCtx() {
   if (!actx) {
-    try { actx = new AudioContext({ sampleRate: SR, latencyHint: 'playback' }); } catch { actx = new AudioContext(); }
+    // 'interactive' = small output buffer: Stop and Play react at once ('playback' kept up to ~0.5 s of queued sound on phones)
+    try { actx = new AudioContext({ sampleRate: SR, latencyHint: 'interactive' }); } catch { actx = new AudioContext(); }
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
   }
   return actx;
@@ -2221,7 +2222,8 @@ async function openProjects() {
       el('small', { class: 'dim' }, new Date(p.updated).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + ` · клипов: ${p.clips.length}`),
       el('button', { class: 'btn small', onclick: () => { conf.hidden = false; } }, 'Удалить'), conf));
   }
-  body.append(el('p', { class: 'note' }, `Эфир ${APP_VERSION}. Проекты и аудио хранятся только на этом устройстве. Для переноса или резервной копии сохраняй файл проекта.`));
+  const lat = actx ? Math.round(((actx.baseLatency || 0) + (actx.outputLatency || 0)) * 1000) : null;
+  body.append(el('p', { class: 'note' }, `Эфир ${APP_VERSION}.${lat != null ? ` Задержка звука ${lat} мс.` : ''} Проекты и аудио хранятся только на этом устройстве. Для переноса или резервной копии сохраняй файл проекта.`));
   modal('Проекты', body);
 }
 // Project file: "EFIR1" + u32 json length + json + raw blobs in order
